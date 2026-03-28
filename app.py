@@ -15,7 +15,7 @@ from helpers import (
     log_feedback, load_feedback_log, load_rights_log, save_rights_log,
     get_expiring_rights, load_ground_truth, save_ground_truth, compute_metrics,
 )
-from styles import get_app_css, LOADING_OVERLAY, THEME_TOGGLE_JS
+from styles import get_app_css, LOADING_OVERLAY
 
 load_dotenv()
 client = TwelveLabs(api_key=os.environ.get("TWELVELABS_API_KEY", ""))
@@ -361,48 +361,109 @@ def video_player(video_url: str, seek_to: float = 0, findings: list = None):
 st.set_page_config(page_title="Cleared", layout="wide", page_icon="C")
 
 st.markdown(get_app_css(), unsafe_allow_html=True)
-st.markdown(THEME_TOGGLE_JS, unsafe_allow_html=True)
+
+# ── SIDEBAR LABEL HELPER ─────────────────────────────────────
+def _sidebar_label(text):
+    st.markdown(
+        f'<p style="margin-top:1rem;margin-bottom:0.25rem;font-size:0.62rem;font-weight:600;'
+        f'color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;'
+        f'font-family:JetBrains Mono,monospace;">{text}</p>',
+        unsafe_allow_html=True
+    )
+
+# ── DARK MODE STATE ──────────────────────────────────────────
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
+# inject dark-mode class on .stApp via JS when toggled
+if st.session_state.dark_mode:
+    st.markdown('<script>document.querySelector(".stApp").classList.add("dark-mode");</script>', unsafe_allow_html=True)
+else:
+    st.markdown('<script>document.querySelector(".stApp").classList.remove("dark-mode");</script>', unsafe_allow_html=True)
 
 # ── SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(
-        '<div style="padding:0.5rem 0 0.6rem 0;border-bottom:1px solid var(--border-light);margin-bottom:0.75rem;'
-        'display:flex;align-items:center;justify-content:space-between;">'
-        '<div>'
-        '<span style="font-family:\'JetBrains Mono\',monospace;font-weight:700;color:var(--text-primary);font-size:1.1rem;'
-        'letter-spacing:-0.02em;line-height:1;">Cleared</span>'
-        '<span style="font-family:\'JetBrains Mono\',monospace;color:var(--text-muted);font-size:0.5rem;letter-spacing:0.1em;'
-        'text-transform:uppercase;margin-left:0.4rem;vertical-align:middle;font-weight:500;">compliance</span>'
-        '</div>'
-        '<div class="theme-toggle" onclick="toggleTheme()">light / dark</div>'
-        '</div>',
-        unsafe_allow_html=True
-    )
-    run = st.button("Run Compliance Check", width='stretch')
+    # logo row
+    _logo_col, _toggle_col = st.columns([3, 1])
+    with _logo_col:
+        st.markdown(
+            '<span style="font-family:JetBrains Mono,monospace;font-weight:700;color:var(--text-primary);font-size:1.1rem;'
+            'letter-spacing:-0.02em;line-height:1;">Cleared</span>',
+            unsafe_allow_html=True
+        )
+    with _toggle_col:
+        if st.button("dark" if not st.session_state.dark_mode else "light", key="theme_toggle"):
+            st.session_state.dark_mode = not st.session_state.dark_mode
+            st.rerun()
 
-    st.markdown('<p style="margin-top:1rem;margin-bottom:0.25rem;font-size:0.62rem;font-weight:600;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;font-family:\'JetBrains Mono\',monospace;">Video</p>', unsafe_allow_html=True)
-    st.caption(DEMO_VIDEO_LABEL)
+    st.markdown('<div style="border-bottom:1px solid var(--border-light);margin-bottom:0.5rem;"></div>', unsafe_allow_html=True)
+
+    # ── 1. VIDEO ──
+    _sidebar_label("1. Video")
+    uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "webm"], label_visibility="collapsed")
+    if uploaded_file:
+        st.caption(f"Uploaded: {uploaded_file.name}")
+    else:
+        st.caption(f"Demo: {DEMO_VIDEO_LABEL}")
 
     selected_video_id = DEMO_VIDEO_ID
-    selected_video_label = DEMO_VIDEO_LABEL
+    selected_video_label = uploaded_file.name if uploaded_file else DEMO_VIDEO_LABEL
 
-    st.markdown('<p style="margin-top:1rem;margin-bottom:0.25rem;font-size:0.62rem;font-weight:600;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;font-family:JetBrains Mono,monospace;">Ruleset</p>', unsafe_allow_html=True)
-    ruleset_name = st.selectbox("ruleset", list(RULESETS.keys()), label_visibility="collapsed")
-    custom_rules = ""
-    if ruleset_name == "Custom":
-        custom_rules = st.text_area("custom rules (one per line)", height=100, label_visibility="collapsed", placeholder="e.g.\nNo visible tattoos\nNo competitor products")
+    # ── 2. TARGET PLATFORMS ──
+    _sidebar_label("2. Target Platforms")
+    selected_platforms = st.multiselect("platforms", PLATFORMS, default=[], label_visibility="collapsed",
+                                        placeholder="Where will this air?")
 
-    st.markdown('<p style="margin-top:1rem;margin-bottom:0.25rem;font-size:0.62rem;font-weight:600;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;font-family:JetBrains Mono,monospace;">Platforms</p>', unsafe_allow_html=True)
-    selected_platforms = st.multiselect("platforms", PLATFORMS, default=[], label_visibility="collapsed")
+    # ── 3. JURISDICTIONS ──
+    _sidebar_label("3. Jurisdictions")
+    selected_jurisdictions = st.multiselect("jurisdictions", list(JURISDICTIONS.keys()), default=[], label_visibility="collapsed",
+                                            placeholder="Which regions?")
 
-    st.markdown('<p style="margin-top:1rem;margin-bottom:0.25rem;font-size:0.62rem;font-weight:600;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;font-family:JetBrains Mono,monospace;">Jurisdictions</p>', unsafe_allow_html=True)
-    selected_jurisdictions = st.multiselect("jurisdictions", list(JURISDICTIONS.keys()), default=[], label_visibility="collapsed")
+    # ── AUTO-RULESET: derive from platform + jurisdiction selection ──
+    auto_rulesets = set()
+    for p in selected_platforms:
+        if p in ("YouTube", "TikTok", "Instagram", "Roblox"):
+            auto_rulesets.add("Platform Policies")
+        elif p in ("Broadcast pre-watershed", "Streaming (Netflix/HBO)", "The Sphere"):
+            auto_rulesets.add("Broadcast Standards")
+    for j in selected_jurisdictions:
+        if j != "None":
+            auto_rulesets.add("Broadcast Standards")
 
-    st.markdown('<p style="margin-top:1rem;margin-bottom:0.25rem;font-size:0.62rem;font-weight:600;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;font-family:JetBrains Mono,monospace;">Audio Flags</p>', unsafe_allow_html=True)
-    selected_audio = st.multiselect("audio flags", AUDIO_FLAGS, default=AUDIO_FLAGS, label_visibility="collapsed")
+    # show what rulesets will be applied
+    if auto_rulesets:
+        chips = " ".join(
+            f'<span style="display:inline-block;padding:2px 8px;border:1px solid var(--border);border-radius:4px;'
+            f'font-size:0.62rem;color:var(--text-tertiary);margin:2px 2px 2px 0;">{r}</span>'
+            for r in sorted(auto_rulesets)
+        )
+        st.markdown(f'<p style="margin-top:0.5rem;font-size:0.6rem;color:var(--text-muted);letter-spacing:0.05em;">'
+                    f'Auto-applied: {chips}</p>', unsafe_allow_html=True)
 
+    # optional: add custom rules
+    include_rights = True
+    with st.expander("Custom rules", expanded=False):
+        custom_rules = st.text_area("One rule per line", height=80, label_visibility="collapsed",
+                                     placeholder="e.g.\nNo visible tattoos\nNo competitor products in frame")
+
+    # combine all auto-applied rulesets for the prompt
+    if not auto_rulesets:
+        ruleset_name = "Broadcast Standards"
+    elif len(auto_rulesets) == 1:
+        ruleset_name = list(auto_rulesets)[0]
+    else:
+        ruleset_name = "Broadcast Standards"  # primary, others merged via custom_rules
+        for rs in auto_rulesets:
+            if rs != "Broadcast Standards":
+                extra_rules = RULESETS.get(rs, {}).get("rules", [])
+                if extra_rules:
+                    custom_rules = (custom_rules or "") + "\n" + "\n".join(extra_rules)
+
+    selected_audio = AUDIO_FLAGS
+
+    # ── RUN BUTTON ──
     st.markdown('<div style="margin-top:0.75rem"></div>', unsafe_allow_html=True)
-    include_rights = st.checkbox("Include rights & clearances scan", value=True)
+    run = st.button("Run Compliance Check", width='stretch')
 
 # ── THEATER PLAYER ────────────────────────────────────────────
 _tv_url = fetch_video_url(DEMO_VIDEO_ID, DEMO_INDEX_ID)
@@ -425,8 +486,8 @@ else:
 _overlay_ph = st.empty()
 
 if run:
-    if not selected_platforms:
-        st.error("Select at least one platform to run analysis.")
+    if not selected_platforms and not selected_jurisdictions:
+        st.error("Select at least one platform or jurisdiction.")
     else:
         _overlay_ph.markdown(LOADING_OVERLAY, unsafe_allow_html=True)
         prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
@@ -456,8 +517,10 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     if "report" not in st.session_state:
         st.markdown('<div style="text-align:center;padding:4rem 2rem;color:var(--text-muted);font-size:0.82rem;'
-                    'font-family:\'JetBrains Mono\',monospace;letter-spacing:0.02em;">'
-                    'Select platforms and click <b style="color:var(--text-secondary)">Run Compliance Check</b> to analyze.</div>',
+                    'font-family:JetBrains Mono,monospace;letter-spacing:0.02em;">'
+                    '1. Upload or select a video<br>'
+                    '2. Pick target platforms + jurisdictions<br>'
+                    '3. Click <b style="color:var(--text-secondary)">Run Compliance Check</b></div>',
                     unsafe_allow_html=True)
     else:
         score = st.session_state.risk_score

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "streamlit",
+      "runtimeExecutable": "/Users/alexpark/Desktop/AUTOMATA LABS/HACKATHON/compliance_track/venv/bin/streamlit",
+      "runtimeArgs": ["run", "app.py", "--server.port", "8503"],
+      "port": 8503
+    }
+  ]
+}
