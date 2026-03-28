@@ -371,32 +371,15 @@ def _sidebar_label(text):
         unsafe_allow_html=True
     )
 
-# ── DARK MODE STATE ──────────────────────────────────────────
-if "dark_mode" not in st.session_state:
-    st.session_state.dark_mode = False
-
-# inject dark-mode class on .stApp via JS when toggled
-if st.session_state.dark_mode:
-    st.markdown('<script>document.querySelector(".stApp").classList.add("dark-mode");</script>', unsafe_allow_html=True)
-else:
-    st.markdown('<script>document.querySelector(".stApp").classList.remove("dark-mode");</script>', unsafe_allow_html=True)
-
 # ── SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
-    # logo row
-    _logo_col, _toggle_col = st.columns([3, 1])
-    with _logo_col:
-        st.markdown(
-            '<span style="font-family:JetBrains Mono,monospace;font-weight:700;color:var(--text-primary);font-size:1.1rem;'
-            'letter-spacing:-0.02em;line-height:1;">Cleared</span>',
-            unsafe_allow_html=True
-        )
-    with _toggle_col:
-        if st.button("dark" if not st.session_state.dark_mode else "light", key="theme_toggle"):
-            st.session_state.dark_mode = not st.session_state.dark_mode
-            st.rerun()
-
-    st.markdown('<div style="border-bottom:1px solid var(--border-light);margin-bottom:0.5rem;"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="padding:0.25rem 0 0.5rem 0;border-bottom:1px solid var(--border-light);margin-bottom:0.5rem;">'
+        '<span style="font-family:JetBrains Mono,monospace;font-weight:700;color:var(--text-primary);font-size:1.1rem;'
+        'letter-spacing:-0.02em;line-height:1;">Cleared</span>'
+        '</div>',
+        unsafe_allow_html=True
+    )
 
     # ── 1. VIDEO ──
     _sidebar_label("1. Video")
