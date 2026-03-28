@@ -48,7 +48,7 @@ from helpers import (
     log_feedback, load_feedback_log, load_rights_log, save_rights_log,
     get_expiring_rights, load_ground_truth, save_ground_truth, compute_metrics,
 )
-from styles import get_app_css, LOADING_OVERLAY
+from styles import get_app_css
 
 load_dotenv()
 _api_key = os.environ.get("TWELVELABS_API_KEY", "")
@@ -558,18 +558,18 @@ with st.sidebar:
     run = st.button("Run Compliance Check", width='stretch')
 
 # ── RUN ───────────────────────────────────────────────────────
-_overlay_ph = st.empty()
-
 if run:
     if not selected_video_id:
         st.error("Upload or select a video first.")
     elif not selected_platforms and not selected_jurisdictions:
         st.error("Select at least one platform or jurisdiction.")
     else:
-        _overlay_ph.markdown(LOADING_OVERLAY, unsafe_allow_html=True)
+        _run_status = st.empty()
+        _run_progress = st.progress(0)
         try:
-            # if video was just uploaded, wait for indexing to finish now
+            # Step 1: wait for indexing if needed
             if selected_task_id:
+                _run_status.caption("Waiting for video indexing...")
                 log.info(f"Checking indexing status for task {selected_task_id}...")
                 _max_wait = 300
                 _waited = 0
@@ -577,6 +577,7 @@ if run:
                     task_status = client.tasks.retrieve(selected_task_id)
                     status = getattr(task_status, 'status', 'unknown')
                     log.info(f"Task {selected_task_id} status: {status} ({_waited}s)")
+                    _run_progress.progress(min(_waited / 60, 0.3))
                     if status == "ready":
                         log.info("Video indexing complete.")
                         break
@@ -587,6 +588,9 @@ if run:
                 if _waited >= _max_wait:
                     raise Exception(f"Video indexing timed out after {_max_wait}s")
 
+            # Step 2: run analysis
+            _run_status.caption("Running compliance analysis...")
+            _run_progress.progress(0.35)
             prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
             log.info(f"Starting analysis: video={selected_video_id}, ruleset={ruleset_name}, platforms={selected_platforms}, jurisdictions={selected_jurisdictions}")
             log.info(f"Prompt length: {len(prompt)} chars")
@@ -594,11 +598,21 @@ if run:
             response = client.analyze(video_id=selected_video_id, prompt=prompt)
             _elapsed = round(time.time() - _t0, 1)
             log.info(f"Analysis complete in {_elapsed}s, response length: {len(response.data)} chars")
+            _run_progress.progress(0.8)
+
+            # Step 3: parse findings
+            _run_status.caption("Parsing findings...")
             findings = parse_findings(response.data)
             log.info(f"Parsed {len(findings)} findings")
             for i, f in enumerate(findings):
                 log.info(f"  Finding {i+1}: {f[:100]}")
+            _run_progress.progress(0.9)
+
+            # Step 4: fetch video URL
+            _run_status.caption("Loading video player...")
             _video_url = fetch_video_url(selected_video_id, selected_index_id)
+            _run_progress.progress(1.0)
+
             st.session_state.report = response.data
             st.session_state.findings = findings
             st.session_state.video_id = selected_video_id
@@ -617,7 +631,8 @@ if run:
             log.error(f"Analysis failed: {e}\n{traceback.format_exc()}")
             st.error(f"Analysis failed: {e}")
         finally:
-            _overlay_ph.empty()
+            _run_status.empty()
+            _run_progress.empty()
 
 # ── THEATER PLAYER ────────────────────────────────────────────
 # Only shows AFTER analysis has run — video source selection is decoupled
