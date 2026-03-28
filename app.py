@@ -51,6 +51,7 @@ from helpers import (
     get_expiring_rights, load_ground_truth, save_ground_truth, compute_metrics,
 )
 from styles import get_app_css
+from bedrock_client import analyze_video_pegasus, is_bedrock_available
 
 load_dotenv()
 _api_key = os.environ.get("TWELVELABS_API_KEY", "")
@@ -648,17 +649,36 @@ if run:
                 if _waited >= _max_wait:
                     raise Exception(f"Video indexing timed out after {_max_wait}s")
 
-            # Step 2: run analysis
-            _run_status.caption("Running compliance analysis...")
-            _run_progress.progress(0.35)
+            # Step 2: run analysis (Bedrock Pegasus → fallback to TwelveLabs SDK)
             prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
             log.info(f"Starting analysis: video={selected_video_id}, ruleset={ruleset_name}, platforms={selected_platforms}, jurisdictions={selected_jurisdictions}")
             log.info(f"Prompt length: {len(prompt)} chars")
             _t0 = time.time()
-            response = client.analyze(video_id=selected_video_id, prompt=prompt)
+
+            report_data = None
+            _analysis_backend = "twelvelabs"
+
+            # Try Bedrock Pegasus first
+            if is_bedrock_available():
+                _run_status.caption("Running compliance analysis via Bedrock Pegasus...")
+                _run_progress.progress(0.35)
+                _video_url_for_analysis = fetch_video_url(selected_video_id, selected_index_id)
+                if _video_url_for_analysis:
+                    report_data = analyze_video_pegasus(_video_url_for_analysis, prompt)
+                    if report_data:
+                        _analysis_backend = "bedrock-pegasus"
+                        log.info("Analysis completed via Bedrock Pegasus")
+
+            # Fallback to TwelveLabs SDK
+            if not report_data:
+                _run_status.caption("Running compliance analysis via TwelveLabs...")
+                _run_progress.progress(0.35)
+                log.info("Using TwelveLabs SDK for analysis" + (" (Bedrock unavailable)" if not is_bedrock_available() else " (Bedrock fallback)"))
+                response = client.analyze(video_id=selected_video_id, prompt=prompt)
+                report_data = getattr(response, 'data', None) or str(response)
+
             _elapsed = round(time.time() - _t0, 1)
-            report_data = getattr(response, 'data', None) or str(response)
-            log.info(f"Analysis complete in {_elapsed}s, response length: {len(report_data)} chars")
+            log.info(f"Analysis complete in {_elapsed}s via {_analysis_backend}, response length: {len(report_data)} chars")
             _run_progress.progress(0.8)
 
             # Step 3: parse findings
@@ -701,6 +721,7 @@ if run:
             st.session_state.ruleset = ruleset_name
             st.session_state.run_time = datetime.now().isoformat()
             st.session_state.analysis_duration = _elapsed
+            st.session_state.analysis_backend = _analysis_backend
             st.session_state.seek_to = 0
             log.info(f"Risk score: {_risk_score}/100 — {_risk_explanation}")
         except Exception as e:
