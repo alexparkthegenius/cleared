@@ -42,7 +42,7 @@ _ui_handler.setFormatter(logging.Formatter("%(asctime)s", datefmt="%H:%M:%S"))
 logging.getLogger("cleared").addHandler(_ui_handler)
 logging.getLogger("cleared.helpers").addHandler(_ui_handler)
 
-from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS, DEFAULT_INDEX_ID, DEMO_VIDEO_ID, DEMO_INDEX_ID, DEMO_VIDEO_LABEL
+from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS, DEFAULT_INDEX_ID
 from helpers import (
     parse_findings, severity_score, parse_timestamp_seconds, build_prompt,
     finding_text, finding_severity, finding_confidence,
@@ -55,10 +55,10 @@ from styles import get_app_css
 load_dotenv()
 _api_key = os.environ.get("TWELVELABS_API_KEY", "")
 if not _api_key:
-    log.warning("TWELVELABS_API_KEY not set — API calls will fail")
+    log.error("TWELVELABS_API_KEY not set — API calls will fail")
 else:
-    log.info(f"API key loaded: {_api_key[:8]}...{_api_key[-4:]}")
-client = TwelveLabs(api_key=_api_key)
+    log.info("API key loaded successfully")
+client = TwelveLabs(api_key=_api_key) if _api_key else None
 
 # ── API HELPERS (need client + st.cache) ─────────────────────
 @st.cache_data(ttl=60)
@@ -539,6 +539,7 @@ with st.sidebar:
 
     # optional: add custom rules
     include_rights = True
+    custom_rules = ""
     with st.expander("Custom rules", expanded=False):
         custom_rules = st.text_area("One rule per line", height=80, label_visibility="collapsed",
                                      placeholder="e.g.\nNo visible tattoos\nNo competitor products in frame")
@@ -602,15 +603,16 @@ if run:
             _t0 = time.time()
             response = client.analyze(video_id=selected_video_id, prompt=prompt)
             _elapsed = round(time.time() - _t0, 1)
-            log.info(f"Analysis complete in {_elapsed}s, response length: {len(response.data)} chars")
+            report_data = getattr(response, 'data', None) or str(response)
+            log.info(f"Analysis complete in {_elapsed}s, response length: {len(report_data)} chars")
             _run_progress.progress(0.8)
 
             # Step 3: parse findings
             _run_status.caption("Parsing findings...")
-            findings = parse_findings(response.data)
+            findings = parse_findings(report_data)
             log.info(f"Parsed {len(findings)} findings")
             for i, f in enumerate(findings):
-                log.info(f"  Finding {i+1}: {f[:100]}")
+                log.info(f"  Finding {i+1}: {finding_text(f)[:100]}")
             _run_progress.progress(0.9)
 
             # Step 4: fetch video URL
@@ -618,7 +620,7 @@ if run:
             _video_url = fetch_video_url(selected_video_id, selected_index_id)
             _run_progress.progress(1.0)
 
-            st.session_state.report = response.data
+            st.session_state.report = report_data
             st.session_state.findings = findings
             st.session_state.video_id = selected_video_id
             st.session_state.index_id = selected_index_id
