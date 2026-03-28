@@ -126,14 +126,20 @@ def _normalize_severity(text):
 
 
 def _estimate_confidence(severity, description=""):
-    """Estimate confidence when not provided by the model."""
-    base = {"CRITICAL": 88, "MAJOR": 78, "MINOR": 65}.get(severity, 70)
-    # boost for specific descriptive language
+    """Estimate confidence when not provided by the model.
+    Conservative defaults — only boost when language is definitive.
+    """
+    base = {"CRITICAL": 72, "MAJOR": 62, "MINOR": 50}.get(severity, 55)
     desc_lower = (description or "").lower()
-    if any(w in desc_lower for w in ["clearly", "visible", "detected", "identified", "shows"]):
-        base = min(base + 8, 97)
-    if any(w in desc_lower for w in ["possible", "may", "might", "appears", "potential"]):
-        base = max(base - 12, 40)
+    # only boost for very definitive language
+    if any(w in desc_lower for w in ["clearly", "confirmed", "detected", "identified"]):
+        base = min(base + 10, 90)
+    # penalize uncertain language
+    if any(w in desc_lower for w in ["possible", "may", "might", "appears", "potential", "unclear", "ambiguous"]):
+        base = max(base - 15, 30)
+    # penalize "clearance needed" / "review" which are speculative
+    if any(w in desc_lower for w in ["clearance needed", "review recommended", "needs review", "maybe"]):
+        base = max(base - 10, 35)
     return base
 
 

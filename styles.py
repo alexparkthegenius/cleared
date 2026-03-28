@@ -317,10 +317,48 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 @keyframes cleared-spin { to { transform: rotate(360deg); } }
 
 /* ── LAYOUT ── */
-[data-testid="stCustomComponentV1"] { margin-bottom: -2rem !important; padding-bottom: 0 !important; line-height: 0 !important; }
+[data-testid="stCustomComponentV1"] {
+    margin-bottom: -2rem !important; padding-bottom: 0 !important; line-height: 0 !important;
+    position: sticky !important; top: 0 !important; z-index: 999 !important;
+    background: var(--bg-primary) !important;
+}
 iframe { display: block !important; margin-bottom: 0 !important; }
 .stTabs { margin-top: 0 !important; }
 [data-testid="stCustomComponentV1"] > div { padding-bottom: 0 !important; }
+
+/* ── FINDING ACTION BUTTONS ── */
+.finding-actions {
+    display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; margin-bottom: 0.25rem;
+}
+.finding-actions .stButton > button {
+    padding: 0.25rem 0.65rem !important; font-size: 0.62rem !important;
+    min-height: unset !important; height: auto !important;
+    letter-spacing: 0.04em; border-radius: 4px !important;
+}
+.btn-seek .stButton > button {
+    background: var(--bg-tertiary) !important; color: var(--text-primary) !important;
+    border: 1px solid var(--border) !important; font-weight: 700 !important;
+}
+.btn-approve .stButton > button {
+    background: var(--risk-low-bg) !important; color: var(--risk-low-text) !important;
+    border: 1px solid var(--risk-low-border) !important;
+}
+.btn-reject .stButton > button {
+    background: var(--risk-critical-bg) !important; color: var(--risk-critical-text) !important;
+    border: 1px solid var(--risk-critical-border) !important;
+}
+.btn-escalate .stButton > button {
+    background: var(--risk-medium-bg) !important; color: var(--risk-medium-text) !important;
+    border: 1px solid var(--risk-medium-border) !important;
+}
+.btn-blur .stButton > button, .btn-bleep .stButton > button {
+    background: var(--info-bg) !important; color: var(--info-text) !important;
+    border: 1px solid var(--info-border) !important;
+}
+.btn-ai .stButton > button {
+    background: var(--ltx-bg) !important; color: #7c3aed !important;
+    border: 1px solid var(--ltx-border) !important;
+}
 [data-baseweb="no-results"] { display: none !important; }
 ul[data-baseweb="menu"] li:only-child[aria-disabled="true"] { display: none !important; }
 ul[data-baseweb="menu"]:empty { display: none !important; }

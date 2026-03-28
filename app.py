@@ -765,50 +765,63 @@ with tab_findings:
                                 f'font-size:0.65rem;font-weight:700;font-family:JetBrains Mono,monospace;">{conf}%</div>'
                                 f'</div></div>', unsafe_allow_html=True)
 
-                    # action row: seek + approve/reject/escalate
-                    col_seek, col_a, col_r, col_e = st.columns([2, 1, 1, 1])
-
-                    if col_seek.button(f"Seek {ts_sec}s", key=f"seek_{i}"):
-                        st.session_state.seek_to = ts_sec
-                        st.rerun()
-
-                    if col_a.button("Approve", key=f"a_{i}"):
-                        log_feedback(finding, "approved", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
-                        st.session_state[f"decision_{i}"] = "approved"
-
-                    if col_r.button("Reject", key=f"r_{i}"):
-                        log_feedback(finding, "rejected", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
-                        st.session_state[f"decision_{i}"] = "rejected"
-
-                    if col_e.button("Escalate", key=f"e_{i}"):
-                        log_feedback(finding, "escalated", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
-                        st.session_state[f"decision_{i}"] = "escalated"
-
-                    _decision = st.session_state.get(f"decision_{i}")
-                    if _decision:
-                        _colors = {"approved": "--risk-low-text", "rejected": "--risk-critical-text", "escalated": "--risk-medium-text"}
-                        st.markdown(f'<p style="font-size:0.7rem;color:var({_colors.get(_decision, "--text-muted")});'
-                                    f'font-weight:600;letter-spacing:0.05em;text-transform:uppercase;">{_decision}</p>',
-                                    unsafe_allow_html=True)
-
-                    # remediation row: blur / bleep / AI replace
-                    st.markdown('<p style="font-size:0.62rem;color:var(--text-muted);letter-spacing:0.1em;'
-                                'text-transform:uppercase;margin-top:0.5rem;margin-bottom:0.3rem;font-weight:600;">'
-                                'Remediation</p>', unsafe_allow_html=True)
-
-                    rem_col1, rem_col2, rem_col3 = st.columns(3)
+                    # compact action row: all buttons inline
                     current_rem = st.session_state.remediations.get(i, {}).get("type")
+                    _decision = st.session_state.get(f"decision_{i}")
 
-                    if rem_col1.button("Blur", key=f"blur_{i}", type="primary" if current_rem == "blur" else "secondary"):
-                        st.session_state.remediations[i] = {"type": "blur", "timecode": ts_sec, "duration": 3}
-                        st.rerun()
+                    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 
-                    if rem_col2.button("Bleep", key=f"bleep_{i}", type="primary" if current_rem == "bleep" else "secondary"):
-                        st.session_state.remediations[i] = {"type": "bleep", "timecode": ts_sec, "duration": 2}
-                        st.rerun()
+                    with c1:
+                        st.markdown('<div class="btn-seek">', unsafe_allow_html=True)
+                        if st.button(f"⏱ {_tc_str}", key=f"seek_{i}"):
+                            st.session_state.seek_to = ts_sec
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
 
-                    if rem_col3.button("AI Replace", key=f"ai_replace_{i}", type="primary" if current_rem == "ai_replace" else "secondary"):
-                        st.session_state.remediations[i] = {"type": "ai_replace", "timecode": ts_sec, "duration": 3}
+                    with c2:
+                        st.markdown('<div class="btn-approve">', unsafe_allow_html=True)
+                        if st.button("✓" if _decision != "approved" else "✓ Done", key=f"a_{i}"):
+                            log_feedback(finding, "approved", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
+                            st.session_state[f"decision_{i}"] = "approved"
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                    with c3:
+                        st.markdown('<div class="btn-reject">', unsafe_allow_html=True)
+                        if st.button("✕" if _decision != "rejected" else "✕ Done", key=f"r_{i}"):
+                            log_feedback(finding, "rejected", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
+                            st.session_state[f"decision_{i}"] = "rejected"
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                    with c4:
+                        st.markdown('<div class="btn-escalate">', unsafe_allow_html=True)
+                        if st.button("⚠" if _decision != "escalated" else "⚠ Done", key=f"e_{i}"):
+                            log_feedback(finding, "escalated", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
+                            st.session_state[f"decision_{i}"] = "escalated"
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                    with c5:
+                        st.markdown('<div class="btn-blur">', unsafe_allow_html=True)
+                        if st.button("Blur" if current_rem != "blur" else "● Blur", key=f"blur_{i}"):
+                            st.session_state.remediations[i] = {"type": "blur", "timecode": ts_sec, "duration": 3}
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                    with c6:
+                        st.markdown('<div class="btn-bleep">', unsafe_allow_html=True)
+                        if st.button("Bleep" if current_rem != "bleep" else "● Bleep", key=f"bleep_{i}"):
+                            st.session_state.remediations[i] = {"type": "bleep", "timecode": ts_sec, "duration": 2}
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                    with c7:
+                        st.markdown('<div class="btn-ai">', unsafe_allow_html=True)
+                        if st.button("AI" if current_rem != "ai_replace" else "● AI", key=f"ai_replace_{i}"):
+                            st.session_state.remediations[i] = {"type": "ai_replace", "timecode": ts_sec, "duration": 3}
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
 
                     # show AI replacement options if selected
                     if current_rem == "ai_replace":
