@@ -412,7 +412,7 @@ with st.sidebar:
 
     # ── 1. VIDEO SOURCE ──
     _sidebar_label("1. Video")
-    video_source = st.radio("Source", ["Upload", "S3 URI", "Iconik"],
+    video_source = st.radio("Source", ["Upload", "TwelveLabs", "Iconik"],
                             horizontal=True, label_visibility="collapsed")
 
     video_s3_uri = ""
@@ -426,21 +426,16 @@ with st.sidebar:
             if upload_key not in st.session_state:
                 file_bytes = uploaded_file.read()
                 log.info(f"Upload: {uploaded_file.name} ({len(file_bytes)} bytes)")
-                # try S3 upload
+                # try S3 upload, always keep local bytes as fallback
                 s3_uri = upload_to_s3(file_bytes, uploaded_file.name)
+                st.session_state[upload_key] = {
+                    "s3_uri": s3_uri or "",
+                    "local_bytes": file_bytes,
+                    "label": uploaded_file.name,
+                }
                 if s3_uri:
-                    st.session_state[upload_key] = {
-                        "s3_uri": s3_uri,
-                        "label": uploaded_file.name,
-                    }
                     log.info(f"Video stored at {s3_uri}")
                 else:
-                    # S3 unavailable — store bytes in session for base64 analysis
-                    st.session_state[upload_key] = {
-                        "s3_uri": "",
-                        "local_bytes": file_bytes,
-                        "label": uploaded_file.name,
-                    }
                     log.info("S3 unavailable — video stored locally for base64 analysis")
 
             upload_info = st.session_state.get(upload_key, {})
@@ -448,12 +443,22 @@ with st.sidebar:
             video_local_bytes = upload_info.get("local_bytes")
             selected_video_label = upload_info.get("label", uploaded_file.name)
 
-    elif video_source == "S3 URI":
-        s3_input = st.text_input("S3 URI", placeholder="s3://bucket/path/video.mp4",
-                                  label_visibility="collapsed")
-        if s3_input and s3_input.startswith("s3://"):
-            video_s3_uri = s3_input
-            selected_video_label = s3_input.split("/")[-1]
+    elif video_source == "TwelveLabs":
+        st.markdown('<p style="font-size:0.72rem;color:var(--text-muted);line-height:1.5;">'
+                    'Select a video from your TwelveLabs index.</p>', unsafe_allow_html=True)
+        tl_api_key = os.environ.get("TWELVELABS_API_KEY", "")
+        if not tl_api_key:
+            st.warning("Set TWELVELABS_API_KEY to browse indexes.")
+        else:
+            tl_index_id = st.text_input("Index ID", placeholder="e.g. 69c815ac699ef40d9d560957",
+                                         label_visibility="collapsed")
+            tl_video_id = st.text_input("Video ID", placeholder="e.g. 69c846b59639891c4612e447",
+                                         label_visibility="collapsed")
+            if tl_index_id and tl_video_id:
+                selected_video_label = f"TwelveLabs: {tl_video_id[:12]}"
+                st.session_state["tl_index_id"] = tl_index_id
+                st.session_state["tl_video_id"] = tl_video_id
+                st.caption(f"Video ref stored. Upload file or provide S3 URI for Bedrock analysis.")
 
     elif video_source == "Iconik":
         st.markdown('<p style="font-size:0.72rem;color:var(--text-muted);line-height:1.5;">'
@@ -584,15 +589,19 @@ if run:
 
             # Step 3: resolve video playback URL
             _run_status.caption("Loading video player...")
+            _video_url = None
             if video_s3_uri:
                 _video_url = get_s3_presigned_url(video_s3_uri)
-            elif video_local_bytes:
-                # for local bytes, create a data URI or use streamlit's built-in
+                if not _video_url:
+                    log.warning("Presigned URL failed, falling back to base64")
+            # fallback to base64 data URI if presigned URL unavailable
+            if not _video_url and video_local_bytes:
                 import base64 as _b64
                 _video_b64 = _b64.b64encode(video_local_bytes).decode()
                 _video_url = f"data:video/mp4;base64,{_video_b64}"
-            else:
-                _video_url = None
+                log.info(f"Using base64 data URI ({len(video_local_bytes)} bytes)")
+            if not _video_url:
+                log.error("No video URL available for playback")
             _run_progress.progress(1.0)
 
             # compute risk score with breakdown
@@ -624,6 +633,11 @@ if run:
             st.session_state.analysis_backend = "bedrock-pegasus"
             st.session_state.seek_to = 0
             log.info(f"Risk score: {_risk_score}/100 — {_risk_explanation}")
+            log.info(f"State stored: report={len(report_data)} chars, "
+                     f"findings={len(findings)}, video_url={'set' if _video_url else 'NONE'}")
+            if not findings:
+                log.warning("Zero findings parsed — check report format")
+                log.info(f"Full report for debug:\n{report_data[:2000]}")
         except Exception as e:
             log.error(f"Analysis failed: {e}\n{traceback.format_exc()}")
             st.error(f"Analysis failed: {e}")
@@ -675,7 +689,6 @@ with tab_findings:
     else:
         # risk banner with score/100 and explanation
         score = st.session_state.risk_score
-        _max_score = max(score, 100)
         _risk_expl = st.session_state.get("risk_explanation", "")
         if score >= 20:
             _level = "CRITICAL"
@@ -1091,8 +1104,9 @@ with tab_export:
                         },
                         "comment": ft
                     })
+                _vid_ref = st.session_state.get("video_s3_uri", "")[:12]
                 otio_export = {"OTIO_SCHEMA": "Timeline.1", "metadata": {"cleared_version": "1.0"},
-                               "name": f"Cleared — {st.session_state.get("video_s3_uri", "")[:12]}", "markers": otio_markers}
+                               "name": f"Cleared — {_vid_ref}", "markers": otio_markers}
                 st.download_button("OTIO Markers", json.dumps(otio_export, indent=2),
                                    "cleared_markers.otio", "application/json", use_container_width=True)
             with col_audit:

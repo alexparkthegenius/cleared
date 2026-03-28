@@ -11,14 +11,24 @@ log = logging.getLogger("cleared.helpers")
 def parse_findings(report):
     """Extract timestamped findings from a compliance report.
     Returns list of dicts: {text, timestamp, severity, confidence}
+
+    Robust parser handles multiple output formats from Pegasus:
+    - Timestamp: [HH:MM] ...
+    - [HH:MM] ...
+    - **[HH:MM]** ...
+    - 1. [HH:MM] ...
+    - - [HH:MM] ...
+    - Any line containing [MM:SS] or [HH:MM:SS] timestamps
     """
     log.info(f"Parsing findings from report ({len(report)} chars, {report.count(chr(10))} lines)")
+    log.info(f"Report preview: {report[:500]}")
     findings = []
     lines = report.split("\n")
     i = 0
     while i < len(lines):
         line = lines[i].strip()
 
+        # Pattern 1: Timestamp: [HH:MM] structured format
         if line.lower().startswith("timestamp:") and "[" in line:
             ts_match = re.search(r'\[[\d:]+(?:-[\d:]+)?\]', line)
             ts_str = ts_match.group(0) if ts_match else ""
@@ -58,11 +68,45 @@ def parse_findings(report):
             i += 1
             continue
 
-        if re.match(r'^\[[\d:]+', line):
-            sev = _normalize_severity(line)
-            conf_match = re.search(r'[Cc]onfidence[:\s]+(\d+)', line)
-            confidence = min(int(conf_match.group(1)), 100) if conf_match else _estimate_confidence(sev, line)
-            findings.append({"text": line, "severity": sev, "confidence": confidence, "source": "compliance", "rule": "Content flag"})
+        # Pattern 2: Line contains a timestamp [MM:SS] or [HH:MM:SS] anywhere
+        # Strips leading bullets, numbers, asterisks, markdown bold
+        ts_match = re.search(r'\[(\d{1,2}:\d{2}(?::\d{2})?(?:\s*-\s*\d{1,2}:\d{2}(?::\d{2})?)?)\]', line)
+        if ts_match and len(line) > 8:
+            # clean markdown formatting
+            clean = re.sub(r'^\s*[-*•]\s*', '', line)       # bullets
+            clean = re.sub(r'^\s*\d+[\.\)]\s*', '', clean)  # numbered lists
+            clean = re.sub(r'\*\*', '', clean)               # bold
+            clean = clean.strip()
+
+            sev = _normalize_severity(clean)
+            conf_match = re.search(r'[Cc]onfidence[:\s]+(\d+)', clean)
+            confidence = min(int(conf_match.group(1)), 100) if conf_match else _estimate_confidence(sev, clean)
+
+            # extract rule/category from context
+            rule = "Content flag"
+            clean_lower = clean.lower()
+            if any(w in clean_lower for w in ["music", "audio", "sound", "song"]):
+                rule = "Audio content"
+            elif any(w in clean_lower for w in ["logo", "brand", "trademark"]):
+                rule = "Brand/trademark"
+            elif any(w in clean_lower for w in ["talent", "face", "person", "actor"]):
+                rule = "Talent clearance"
+            elif any(w in clean_lower for w in ["alcohol", "drink", "beer", "wine"]):
+                rule = "Substance portrayal"
+            elif any(w in clean_lower for w in ["profan", "language", "speech", "slur"]):
+                rule = "Language/speech"
+            elif any(w in clean_lower for w in ["violen", "blood", "weapon", "gun"]):
+                rule = "Violence"
+            elif any(w in clean_lower for w in ["art", "painting", "sculpture", "design"]):
+                rule = "Artwork clearance"
+
+            findings.append({
+                "text": clean,
+                "severity": sev,
+                "confidence": confidence,
+                "source": "compliance",
+                "rule": rule,
+            })
             i += 1
             continue
 
@@ -159,12 +203,12 @@ def parse_rights_from_report(report):
 
 
 def severity_score(report):
-    """Compute a weighted severity score from a report."""
+    """Compute a weighted severity score from a report, capped at 100."""
     score = 0
     score += report.count("CRITICAL") * 10
     score += report.count("MAJOR") * 7
     score += report.count("MINOR") * 3
-    return score
+    return min(score, 100)
 
 
 def parse_timestamp_seconds(finding):
