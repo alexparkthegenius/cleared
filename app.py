@@ -41,7 +41,7 @@ _ui_handler.setFormatter(logging.Formatter("%(asctime)s", datefmt="%H:%M:%S"))
 logging.getLogger("cleared").addHandler(_ui_handler)
 logging.getLogger("cleared.helpers").addHandler(_ui_handler)
 
-from cleared_config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS
+from app_config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS
 from helpers import (
     parse_findings, severity_score, parse_timestamp_seconds, build_prompt,
     finding_text, finding_severity, finding_confidence,

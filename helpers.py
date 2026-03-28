@@ -378,7 +378,7 @@ def compute_metrics(ground_truth_violations, system_findings):
 
 def build_prompt(ruleset_name, custom_rules, platforms, jurisdictions, audio_flags, include_rights):
     """Build the compliance analysis prompt for TwelveLabs Pegasus."""
-    from cleared_config import RULESETS, JURISDICTIONS
+    from app_config import RULESETS, JURISDICTIONS
 
     rules_list = list(RULESETS[ruleset_name]["rules"]) if ruleset_name != "Custom" else []
     if custom_rules:
