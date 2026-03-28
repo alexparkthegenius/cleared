@@ -122,12 +122,13 @@ def run_pegasus_analysis(video_s3_uri=None, video_bytes=None, prompt=""):
     try:
         # build mediaSource — top-level, not nested under "video"
         if video_s3_uri:
-            media_source = {
-                "s3Location": {
-                    "uri": video_s3_uri,
-                    "bucketOwner": os.environ.get("AWS_ACCOUNT_ID", ""),
-                }
-            }
+            s3_location = {"uri": video_s3_uri}
+            account_id = os.environ.get("AWS_ACCOUNT_ID", "")
+            if account_id:
+                s3_location["bucketOwner"] = account_id
+            else:
+                log.warning("AWS_ACCOUNT_ID not set — omitting bucketOwner from Pegasus request")
+            media_source = {"s3Location": s3_location}
             log.info(f"Pegasus input: S3 URI {video_s3_uri[:60]}")
         elif video_bytes:
             video_b64 = base64.b64encode(video_bytes).decode("utf-8")
@@ -184,12 +185,11 @@ def search_with_marengo(video_s3_uri=None, video_bytes=None, query="", embedding
             embedding_options = ["visual-text", "audio"]
 
         if video_s3_uri:
-            video_input = {
-                "s3Location": {
-                    "uri": video_s3_uri,
-                    "bucketOwner": os.environ.get("AWS_ACCOUNT_ID", ""),
-                }
-            }
+            s3_loc = {"uri": video_s3_uri}
+            acct = os.environ.get("AWS_ACCOUNT_ID", "")
+            if acct:
+                s3_loc["bucketOwner"] = acct
+            video_input = {"s3Location": s3_loc}
             input_type = "video"
         elif video_bytes:
             video_b64 = base64.b64encode(video_bytes).decode("utf-8")
