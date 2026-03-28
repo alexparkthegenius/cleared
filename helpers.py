@@ -219,7 +219,7 @@ def parse_timestamp_seconds(finding):
         if match:
             return int(match.group(1)) * 60 + int(match.group(2))
     except Exception:
-        pass
+        log.error(f"parse_timestamp_seconds: failed to parse timestamp from text={text[:80]!r}", exc_info=True)
     return 0
 
 
@@ -260,21 +260,25 @@ def log_feedback(finding, decision, video_id, ruleset, platforms, jurisdictions)
     try:
         with open("feedback_log.json", "a") as f:
             f.write(json.dumps(entry) + "\n")
-    except Exception as e:
-        log.error(f"Failed to write feedback log: {e}")
+    except Exception:
+        log.exception(f"log_feedback: failed to write feedback entry for video_id={video_id}, decision={decision}")
 
 
 def load_feedback_log():
     try:
         with open("feedback_log.json", "r") as f:
             entries = []
-            for l in f.readlines():
+            for line_num, l in enumerate(f.readlines(), 1):
                 try:
                     entries.append(json.loads(l))
                 except json.JSONDecodeError:
+                    log.warning(f"load_feedback_log: skipping malformed JSON at line {line_num}: {l[:80]!r}")
                     continue
             return entries
     except FileNotFoundError:
+        return []
+    except Exception:
+        log.exception("load_feedback_log: unexpected error reading feedback_log.json")
         return []
 
 
@@ -283,6 +287,9 @@ def load_rights_log():
         with open("rights_log.json", "r") as f:
             return json.load(f)
     except FileNotFoundError:
+        return []
+    except Exception:
+        log.exception("load_rights_log: failed to parse rights_log.json")
         return []
 
 
@@ -302,7 +309,8 @@ def get_expiring_rights(entries, days_ahead=30):
                 e["days_remaining"] = delta
                 expiring.append(e)
         except Exception:
-            pass
+            log.warning(f"get_expiring_rights: failed to parse expiry_date for asset={e.get('asset', 'unknown')!r}, "
+                        f"expiry_date={e.get('expiry_date')!r}", exc_info=True)
     return expiring
 
 
@@ -311,6 +319,9 @@ def load_ground_truth():
         with open("ground_truth.json", "r") as f:
             return json.load(f)
     except FileNotFoundError:
+        return {}
+    except Exception:
+        log.exception("load_ground_truth: failed to parse ground_truth.json")
         return {}
 
 

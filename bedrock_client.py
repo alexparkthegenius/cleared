@@ -36,7 +36,7 @@ def _get_bedrock():
         log.info(f"Bedrock client initialized (region={S3_REGION})")
         return _bedrock_client
     except Exception as e:
-        log.error(f"Bedrock init failed: {e}")
+        log.exception(f"Bedrock init failed (region={S3_REGION})")
         return None
 
 
@@ -51,7 +51,7 @@ def _get_s3():
         log.info("S3 client initialized")
         return _s3_client
     except Exception as e:
-        log.error(f"S3 init failed: {e}")
+        log.exception(f"S3 client init failed (region={S3_REGION})")
         return None
 
 
@@ -73,14 +73,18 @@ def upload_to_s3(file_bytes, filename):
         log.info(f"Uploaded to S3: {uri}")
         return uri
     except Exception as e:
-        log.error(f"S3 upload failed: {e}")
+        log.exception(f"S3 upload failed for filename={filename}, bucket={S3_BUCKET}")
         return None
 
 
 def get_s3_presigned_url(s3_uri, expires_in=3600):
     """Generate a presigned URL for video playback from S3 URI."""
     s3 = _get_s3()
-    if not s3 or not s3_uri:
+    if not s3:
+        log.error("get_s3_presigned_url: S3 client not available")
+        return None
+    if not s3_uri:
+        log.error("get_s3_presigned_url: no s3_uri provided")
         return None
     try:
         # parse s3://bucket/key
@@ -95,7 +99,7 @@ def get_s3_presigned_url(s3_uri, expires_in=3600):
         log.info(f"Presigned URL generated for {s3_uri[:50]}...")
         return url
     except Exception as e:
-        log.error(f"Presigned URL failed: {e}")
+        log.exception(f"Presigned URL generation failed for s3_uri={s3_uri}")
         return None
 
 
@@ -112,6 +116,7 @@ def run_pegasus_analysis(video_s3_uri=None, video_bytes=None, prompt=""):
     """
     bedrock = _get_bedrock()
     if not bedrock:
+        log.error("run_pegasus_analysis: Bedrock client not available, cannot run analysis")
         return None
 
     try:
@@ -155,7 +160,7 @@ def run_pegasus_analysis(video_s3_uri=None, video_bytes=None, prompt=""):
         return _extract_text(response_body)
 
     except Exception as e:
-        log.error(f"Pegasus analysis failed: {e}")
+        log.exception(f"Pegasus analysis failed (model={PEGASUS_MODEL_ID}, s3_uri={video_s3_uri}, has_bytes={video_bytes is not None})")
         return None
 
 
@@ -173,6 +178,7 @@ def search_with_marengo(video_s3_uri=None, video_bytes=None, query="", embedding
     """
     bedrock = _get_bedrock()
     if not bedrock:
+        log.error("search_with_marengo: Bedrock client not available")
         return None
 
     try:
@@ -225,7 +231,7 @@ def search_with_marengo(video_s3_uri=None, video_bytes=None, query="", embedding
         return response_body
 
     except Exception as e:
-        log.error(f"Marengo search failed: {e}")
+        log.exception(f"Marengo search failed (model={MARENGO_MODEL_ID}, s3_uri={video_s3_uri}, has_bytes={video_bytes is not None}, query_len={len(query) if query else 0})")
         return None
 
 

@@ -436,7 +436,7 @@ with st.sidebar:
                 if s3_uri:
                     log.info(f"Video stored at {s3_uri}")
                 else:
-                    log.info("S3 unavailable — video stored locally for base64 analysis")
+                    log.warning(f"S3 upload failed for {uploaded_file.name} — falling back to local bytes for base64 analysis")
 
             upload_info = st.session_state.get(upload_key, {})
             video_s3_uri = upload_info.get("s3_uri", "")
@@ -947,6 +947,8 @@ with tab_rights:
                     css, indicator = "rights-ok", f"{days} days remaining"
                     color = "#888"
             except Exception:
+                log.warning(f"Rights tracker: failed to parse expiry_date for asset={e.get('asset', 'unknown')!r}, "
+                            f"expiry_date={e.get('expiry_date')!r}", exc_info=True)
                 css, indicator, color = "rights-ok", "date unknown", "#888"
             st.markdown(f'<div class="{css}" style="border-color:{color};color:{color}">'
                         f'<b>{e.get("asset","")}</b> · {e.get("type","")} · {e.get("expiry_date","")} · {indicator}'
@@ -972,6 +974,7 @@ with tab_rights:
                 else:
                     css, indicator, color = "rights-ok", f"{days} days remaining", "#888"
             except Exception:
+                log.warning(f"Rights tracker: failed to parse template expiry_date for asset={e.get('asset', 'unknown')!r}", exc_info=True)
                 css, indicator, color = "rights-ok", "—", "#888"
             st.markdown(f'<div class="{css}" style="border-color:{color};color:{color};opacity:0.7;">'
                         f'<b>{e["asset"]}</b> · {e["type"]} · {e["expiry_date"]} · {indicator}'
