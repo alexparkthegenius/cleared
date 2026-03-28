@@ -2,11 +2,15 @@
 
 import re
 import json
+import logging
 from datetime import datetime, date
+
+log = logging.getLogger("cleared.helpers")
 
 
 def parse_findings(report):
     """Extract timestamped findings from a compliance report."""
+    log.info(f"Parsing findings from report ({len(report)} chars, {report.count(chr(10))} lines)")
     findings = []
     lines = report.split("\n")
     i = 0
@@ -69,7 +73,7 @@ def parse_timestamp_seconds(finding):
 
 def log_feedback(finding, decision, video_id, ruleset, platforms, jurisdictions):
     """Append a reviewer decision to the feedback log."""
-    log = {
+    entry = {
         "timestamp": datetime.now().isoformat(),
         "video_id": video_id,
         "finding": finding,
@@ -78,8 +82,9 @@ def log_feedback(finding, decision, video_id, ruleset, platforms, jurisdictions)
         "platforms": platforms,
         "jurisdictions": jurisdictions,
     }
+    log.info(f"Feedback logged: {decision} — {finding[:60]}")
     with open("feedback_log.json", "a") as f:
-        f.write(json.dumps(log) + "\n")
+        f.write(json.dumps(entry) + "\n")
 
 
 def load_feedback_log():

@@ -1,6 +1,8 @@
 import os
 import json
 import time
+import logging
+import traceback
 import html as html_mod
 import pandas as pd
 from datetime import datetime, date
@@ -8,6 +10,37 @@ import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from twelvelabs import TwelveLabs
+
+# ── LOGGING SETUP ─────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("cleared")
+
+
+class SessionLogHandler(logging.Handler):
+    """Captures log records into a list for display in the UI."""
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append({
+            "time": self.format(record).split(" ")[0] if self.format(record) else "",
+            "level": record.levelname,
+            "msg": record.getMessage(),
+        })
+        # keep last 200 entries
+        if len(self.records) > 200:
+            self.records = self.records[-200:]
+
+
+_ui_handler = SessionLogHandler()
+_ui_handler.setFormatter(logging.Formatter("%(asctime)s", datefmt="%H:%M:%S"))
+logging.getLogger("cleared").addHandler(_ui_handler)
+logging.getLogger("cleared.helpers").addHandler(_ui_handler)
 
 from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS, DEMO_VIDEO_ID, DEMO_INDEX_ID, DEMO_VIDEO_LABEL
 from helpers import (
@@ -18,7 +51,12 @@ from helpers import (
 from styles import get_app_css, LOADING_OVERLAY
 
 load_dotenv()
-client = TwelveLabs(api_key=os.environ.get("TWELVELABS_API_KEY", ""))
+_api_key = os.environ.get("TWELVELABS_API_KEY", "")
+if not _api_key:
+    log.warning("TWELVELABS_API_KEY not set — API calls will fail")
+else:
+    log.info(f"API key loaded: {_api_key[:8]}...{_api_key[-4:]}")
+client = TwelveLabs(api_key=_api_key)
 
 # ── API HELPERS (need client + st.cache) ─────────────────────
 @st.cache_data(ttl=60)
@@ -32,26 +70,33 @@ def fetch_indexes():
 def get_or_create_index():
     """Get the first user-owned index, or create one."""
     try:
+        log.info("Fetching indexes from TwelveLabs...")
         indexes = list(client.indexes.list())
+        log.info(f"Found {len(indexes)} indexes: {[(idx.index_name, idx.id) for idx in indexes]}")
         for idx in indexes:
             name = idx.index_name or ""
             if "sample" not in name.lower():
+                log.info(f"Using index: {name} ({idx.id})")
                 return idx.id
         # no non-sample index found, create one
+        log.info("No user index found, creating 'cleared-compliance'...")
         new_idx = client.indexes.create(
             index_name="cleared-compliance",
             models=[{"model_name": "marengo", "options": ["visual", "conversation", "text_in_video", "logo"]}],
         )
+        log.info(f"Created index: {new_idx.id}")
         return new_idx.id
-    except Exception:
-        # fallback: create fresh
+    except Exception as e:
+        log.error(f"Index lookup failed: {e}\n{traceback.format_exc()}")
         try:
             new_idx = client.indexes.create(
                 index_name="cleared-compliance",
                 models=[{"model_name": "marengo", "options": ["visual", "conversation", "text_in_video", "logo"]}],
             )
+            log.info(f"Fallback index created: {new_idx.id}")
             return new_idx.id
-        except Exception:
+        except Exception as e2:
+            log.error(f"Fallback index creation failed: {e2}\n{traceback.format_exc()}")
             return None
 
 @st.cache_data(ttl=60)
@@ -72,9 +117,13 @@ def fetch_videos(index_id):
 @st.cache_data(ttl=3600)
 def fetch_video_url(video_id, index_id):
     try:
+        log.info(f"Fetching video URL: video={video_id}, index={index_id}")
         video = client.indexes.videos.retrieve(index_id, video_id)
-        return video.hls.video_url
-    except Exception:
+        url = video.hls.video_url
+        log.info(f"Video URL resolved: {url[:80]}...")
+        return url
+    except Exception as e:
+        log.error(f"fetch_video_url failed: video={video_id}, index={index_id} — {e}")
         return None
 
 # ── VIDEO PLAYER COMPONENT ───────────────────────────────────
@@ -416,18 +465,22 @@ with st.sidebar:
         if upload_key not in st.session_state:
             with st.spinner(f"Indexing {uploaded_file.name}..."):
                 try:
-                    import tempfile, os
+                    import tempfile
+                    log.info(f"Upload started: {uploaded_file.name} ({uploaded_file.size} bytes)")
                     # get user's own index (not the demo one)
                     upload_index_id = get_or_create_index()
                     if not upload_index_id:
                         raise Exception("Could not find or create an index. Check your API key.")
+                    log.info(f"Using index {upload_index_id} for upload")
                     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
                         tmp.write(uploaded_file.read())
                         tmp_path = tmp.name
+                    log.info(f"Temp file written: {tmp_path}")
                     task = client.tasks.create(
                         index_id=upload_index_id,
                         video_file=open(tmp_path, "rb"),
                     )
+                    log.info(f"Upload task created: video_id={task.video_id}, status={getattr(task, 'status', 'unknown')}")
                     st.session_state[upload_key] = {
                         "video_id": task.video_id,
                         "index_id": upload_index_id,
@@ -436,6 +489,7 @@ with st.sidebar:
                     os.unlink(tmp_path)
                     st.success(f"Indexed: {uploaded_file.name}")
                 except Exception as e:
+                    log.error(f"Upload failed: {e}\n{traceback.format_exc()}")
                     st.error(f"Upload failed: {e}")
                     st.session_state[upload_key] = {"video_id": DEMO_VIDEO_ID, "index_id": DEMO_INDEX_ID, "label": DEMO_VIDEO_LABEL}
 
@@ -532,12 +586,19 @@ if run:
     else:
         _overlay_ph.markdown(LOADING_OVERLAY, unsafe_allow_html=True)
         prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
+        log.info(f"Starting analysis: video={selected_video_id}, ruleset={ruleset_name}, platforms={selected_platforms}, jurisdictions={selected_jurisdictions}")
+        log.info(f"Prompt length: {len(prompt)} chars")
         _t0 = time.time()
         try:
             response = client.analyze(video_id=selected_video_id, prompt=prompt)
             _elapsed = round(time.time() - _t0, 1)
+            log.info(f"Analysis complete in {_elapsed}s, response length: {len(response.data)} chars")
+            findings = parse_findings(response.data)
+            log.info(f"Parsed {len(findings)} findings")
+            for i, f in enumerate(findings):
+                log.info(f"  Finding {i+1}: {f[:100]}")
             st.session_state.report = response.data
-            st.session_state.findings = parse_findings(response.data)
+            st.session_state.findings = findings
             st.session_state.video_id = selected_video_id
             st.session_state.index_id = selected_index_id
             st.session_state.video_label = selected_video_label
@@ -548,7 +609,9 @@ if run:
             st.session_state.run_time = datetime.now().isoformat()
             st.session_state.analysis_duration = _elapsed
             st.session_state.seek_to = 0
+            log.info(f"Risk score: {st.session_state.risk_score}")
         except Exception as e:
+            log.error(f"Analysis failed: {e}\n{traceback.format_exc()}")
             st.error(f"Analysis failed: {e}")
         finally:
             _overlay_ph.empty()
@@ -986,3 +1049,23 @@ with tab6:
         st.markdown("---")
         st.dataframe(df_log, width='stretch')
         st.download_button("Download Learning Data", df_log.to_csv(index=False), "cleared_learning.csv", "text/csv")
+
+# ── DEBUG PANEL ──────────────────────────────────────────────
+with st.expander("System Log", expanded=False):
+    logs_list = _ui_handler.records
+    if not logs_list:
+        st.caption("No log entries yet. Run a compliance check to see activity.")
+    else:
+        errors = [r for r in logs_list if r["level"] in ("ERROR", "WARNING")]
+        if errors:
+            st.markdown(f'<p style="color:var(--risk-critical-accent);font-size:0.72rem;font-weight:600;">'
+                        f'{len(errors)} error(s) / warning(s)</p>', unsafe_allow_html=True)
+        for r in reversed(logs_list[-50:]):
+            color = "#dc2626" if r["level"] == "ERROR" else "#d97706" if r["level"] == "WARNING" else "var(--text-muted)"
+            st.markdown(
+                f'<p style="font-family:JetBrains Mono,monospace;font-size:0.68rem;color:{color};'
+                f'line-height:1.5;margin:0;padding:1px 0;">'
+                f'<span style="color:var(--text-muted)">{r["time"]}</span> '
+                f'<span style="font-weight:600">[{r["level"]}]</span> {html_mod.escape(r["msg"][:200])}</p>',
+                unsafe_allow_html=True
+            )
