@@ -480,13 +480,37 @@ with st.sidebar:
                         index_id=upload_index_id,
                         video_file=open(tmp_path, "rb"),
                     )
-                    log.info(f"Upload task created: video_id={task.video_id}, status={getattr(task, 'status', 'unknown')}")
+                    log.info(f"Upload task created: video_id={task.video_id}, task_id={task.id}, status={getattr(task, 'status', 'unknown')}")
+                    os.unlink(tmp_path)
+
+                    # wait for indexing to complete
+                    _status_ph = st.empty()
+                    _max_wait = 300  # 5 min max
+                    _waited = 0
+                    while _waited < _max_wait:
+                        try:
+                            task_status = client.tasks.retrieve(task.id)
+                            status = getattr(task_status, 'status', 'unknown')
+                            log.info(f"Task {task.id} status: {status} ({_waited}s elapsed)")
+                            _status_ph.caption(f"Processing: {status} ({_waited}s)...")
+                            if status == "ready":
+                                break
+                            elif status == "failed":
+                                raise Exception(f"Indexing failed for task {task.id}")
+                        except AttributeError:
+                            log.info(f"Task polling returned unexpected format, waiting... ({_waited}s)")
+                        time.sleep(5)
+                        _waited += 5
+                    _status_ph.empty()
+
+                    if _waited >= _max_wait:
+                        log.warning(f"Task {task.id} not ready after {_max_wait}s, proceeding anyway")
+
                     st.session_state[upload_key] = {
                         "video_id": task.video_id,
                         "index_id": upload_index_id,
                         "label": uploaded_file.name,
                     }
-                    os.unlink(tmp_path)
                     st.success(f"Indexed: {uploaded_file.name}")
                 except Exception as e:
                     log.error(f"Upload failed: {e}\n{traceback.format_exc()}")
@@ -561,7 +585,9 @@ with st.sidebar:
     run = st.button("Run Compliance Check", width='stretch')
 
 # ── THEATER PLAYER ────────────────────────────────────────────
-_tv_url = fetch_video_url(selected_video_id, selected_index_id)
+_tv_url = None
+if selected_video_id:
+    _tv_url = fetch_video_url(selected_video_id, selected_index_id)
 if _tv_url:
     video_player(
         _tv_url,
@@ -569,10 +595,11 @@ if _tv_url:
         findings=st.session_state.get("findings", []),
     )
 else:
+    _msg = "Upload a video to get started" if not selected_video_id else "Video processing — player will appear when ready"
     st.markdown(
-        '<div style="background:#111;border-radius:8px;height:420px;display:flex;align-items:center;'
-        'justify-content:center;color:#555;font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;'
-        'letter-spacing:0.05em;">Video player loading...</div>',
+        f'<div style="background:#111;border-radius:8px;height:420px;display:flex;align-items:center;'
+        f'justify-content:center;color:#555;font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;'
+        f'letter-spacing:0.05em;">{_msg}</div>',
         unsafe_allow_html=True
     )
 

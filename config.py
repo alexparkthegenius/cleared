@@ -68,10 +68,10 @@ AUDIO_FLAGS = [
 ]
 
 # Default index (user's own)
-DEFAULT_INDEX_ID = "69c8296a74e8033fe643bcdd"
+DEFAULT_INDEX_ID = "69c815ac699ef40d9d560957"
 
-# Demo video IDs (fallback)
-DEMO_VIDEO_ID = "69bf04be251dc4f29f376218"
-DEMO_INDEX_ID = "69c8296a74e8033fe643bcdd"
+# Demo video IDs (fallback — set after first upload)
+DEMO_VIDEO_ID = ""
+DEMO_INDEX_ID = "69c815ac699ef40d9d560957"
 DEMO_VIDEO_LABEL = "compliance-practice-10"
 DEMO_VIDEO_FILENAME = "compliance-practice-10.mp4"
