@@ -409,51 +409,44 @@ Identify ALL of the following requiring clearance:
 Format: [timestamp] [asset type] [description] [clearance needed: YES/MAYBE/NO]
 """ if include_rights else ""
 
-    return f"""
-You are a senior compliance reviewer conducting a full regulatory clearance review.
+    return f"""You are a senior compliance reviewer. You MUST ONLY flag violations that match the specific rules listed below. Do NOT invent, infer, or speculate about violations not covered by these rules. If you are not confident a violation exists, do NOT report it. Only report what you can directly observe in the video.
+
+IMPORTANT CONSTRAINTS:
+- Only flag items that clearly violate a rule listed below
+- Confidence must reflect how certain you are: use 30-50 for uncertain, 50-70 for likely, 70-90 for clear, 90+ only for unambiguous
+- If a category has no violations, write: NOT DETECTED
+- Do NOT flag normal, compliant content
+- Do NOT flag things that "could potentially" be an issue — only flag what IS an issue
 
 TARGET PLATFORMS: {platforms_text}
 
-COMPLIANCE RULESET ({ruleset_name}):
+RULES TO CHECK ({ruleset_name}):
 {rules_text}
 
-AUDIO FLAGS TO CHECK:
+AUDIO RULES TO CHECK:
 {audio_text}
 
-Produce a structured compliance report:
+FORMAT — use this exact structure for every finding:
 
 SECTION 1 - CONTENT FLAGS
-Check for: alcohol, drugs, violence, minors, abuse, hate speech, vaping, tobacco, dangerous activities.
-For each finding:
-- Exact timestamp [MM:SS-MM:SS]
-- Precise description of what was detected
-- Which rule it violates
-- Severity: CRITICAL / MAJOR / MINOR
-- Confidence: 0-100 (how certain you are this is a real violation)
-- Recommended action
-If nothing found in a category, state: NOT DETECTED.
+For each violation of the rules above:
+[MM:SS] Description of exactly what is visible/audible — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
 
 SECTION 2 - AUDIO FLAGS
-Check for: {', '.join(audio_flags) if audio_flags else 'general audio compliance'}
-For each finding:
-- Timestamp [MM:SS-MM:SS]
-- Description of audio content
-- Whether clearance or censorship is required
-- Severity: CRITICAL / MAJOR / MINOR
-- Confidence: 0-100
+For each audio violation:
+[MM:SS] Description of audio content — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
 
 {rights_section}
 
 SECTION 4 - PLATFORM SUITABILITY
 For each platform in [{platforms_text}]:
-Format: [platform]: [APPROVED / FLAGGED / REJECTED] — [one sentence reason] [timestamps if relevant]
+[platform]: APPROVED / FLAGGED / REJECTED — reason [timestamps if relevant]
 
 SECTION 5 - REGULATORY REVIEW
 {jurisdiction_text}
-For each jurisdiction: [COMPLIANT / FLAG] — [specific rule] — [evidence]
+For each jurisdiction: COMPLIANT / FLAG — specific rule — evidence
 
-SECTION 6 - OVERALL RECOMMENDATION
+SECTION 6 - OVERALL
 APPROVED FOR DISTRIBUTION / NEEDS REVIEW / REJECTED
-Risk level: CRITICAL / HIGH / MEDIUM / LOW
-One paragraph summary written for a client.
-"""
+Risk: CRITICAL / HIGH / MEDIUM / LOW
+One paragraph summary for client."""
