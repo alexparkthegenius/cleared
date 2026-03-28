@@ -3,13 +3,15 @@
 import re
 import json
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 log = logging.getLogger("cleared.helpers")
 
 
 def parse_findings(report):
-    """Extract timestamped findings from a compliance report."""
+    """Extract timestamped findings from a compliance report.
+    Returns list of dicts: {text, timestamp, severity, confidence}
+    """
     log.info(f"Parsing findings from report ({len(report)} chars, {report.count(chr(10))} lines)")
     findings = []
     lines = report.split("\n")
@@ -30,25 +32,106 @@ def parse_findings(report):
 
             description = ""
             severity = ""
-            for fwd in range(i + 1, min(i + 8, len(lines))):
+            confidence = 0
+            for fwd in range(i + 1, min(i + 10, len(lines))):
                 fwd_line = lines[fwd].strip()
                 if fwd_line.lower().startswith("description:"):
                     description = fwd_line[len("description:"):].strip()
                 elif fwd_line.lower().startswith("severity:"):
                     severity = fwd_line[len("severity:"):].strip()
+                elif fwd_line.lower().startswith("confidence:"):
+                    conf_match = re.search(r'(\d+)', fwd_line)
+                    if conf_match:
+                        confidence = min(int(conf_match.group(1)), 100)
 
             parts = [p for p in [ts_str, category, description, severity] if p]
-            findings.append(" — ".join(parts))
+            text = " — ".join(parts)
+            if not confidence:
+                confidence = _estimate_confidence(severity, description)
+            findings.append({"text": text, "severity": _normalize_severity(severity or text), "confidence": confidence})
             i += 1
             continue
 
         if re.match(r'^\[[\d:]+', line):
-            findings.append(line)
+            sev = _normalize_severity(line)
+            conf_match = re.search(r'[Cc]onfidence[:\s]+(\d+)', line)
+            confidence = min(int(conf_match.group(1)), 100) if conf_match else _estimate_confidence(sev, line)
+            findings.append({"text": line, "severity": sev, "confidence": confidence})
             i += 1
             continue
 
         i += 1
+
+    log.info(f"Parsed {len(findings)} findings")
     return findings
+
+
+def _normalize_severity(text):
+    t = text.upper()
+    if "CRITICAL" in t:
+        return "CRITICAL"
+    if "MAJOR" in t:
+        return "MAJOR"
+    return "MINOR"
+
+
+def _estimate_confidence(severity, description=""):
+    """Estimate confidence when not provided by the model."""
+    base = {"CRITICAL": 88, "MAJOR": 78, "MINOR": 65}.get(severity, 70)
+    # boost for specific descriptive language
+    desc_lower = (description or "").lower()
+    if any(w in desc_lower for w in ["clearly", "visible", "detected", "identified", "shows"]):
+        base = min(base + 8, 97)
+    if any(w in desc_lower for w in ["possible", "may", "might", "appears", "potential"]):
+        base = max(base - 12, 40)
+    return base
+
+
+def parse_rights_from_report(report):
+    """Extract rights/clearance items from the compliance report."""
+    rights = []
+    in_rights_section = False
+    lines = report.split("\n")
+    today = date.today()
+
+    for line in lines:
+        stripped = line.strip()
+        if "RIGHTS" in stripped.upper() and "CLEARANCE" in stripped.upper():
+            in_rights_section = True
+            continue
+        if in_rights_section and stripped.startswith("SECTION"):
+            break
+        if in_rights_section and stripped.startswith("["):
+            ts_match = re.search(r'\[[\d:]+(?:-[\d:]+)?\]', stripped)
+            rest = re.sub(r'\[[\d:]+(?:-[\d:]+)?\]\s*', '', stripped)
+
+            # determine type
+            asset_type = "Other"
+            rest_lower = rest.lower()
+            if any(w in rest_lower for w in ["music", "track", "song", "audio", "jingle"]):
+                asset_type = "Music license"
+            elif any(w in rest_lower for w in ["logo", "brand", "trademark", "product"]):
+                asset_type = "Brand license"
+            elif any(w in rest_lower for w in ["talent", "face", "person", "actor", "performer"]):
+                asset_type = "Talent release"
+            elif any(w in rest_lower for w in ["artwork", "painting", "sculpture", "art"]):
+                asset_type = "Artwork clearance"
+            elif any(w in rest_lower for w in ["footage", "archive", "news", "clip"]):
+                asset_type = "Archive footage"
+
+            needs_clearance = "YES" in rest.upper() or "MAYBE" in rest.upper()
+
+            rights.append({
+                "asset": rest[:80],
+                "type": asset_type,
+                "expiry_date": (today + timedelta(days=30)).isoformat(),
+                "notes": f"Auto-detected from video analysis. {'Clearance needed.' if needs_clearance else 'Review recommended.'}",
+                "added_at": datetime.now().isoformat(),
+                "auto_detected": True,
+            })
+
+    log.info(f"Extracted {len(rights)} rights/clearance items from report")
+    return rights
 
 
 def severity_score(report):
@@ -61,9 +144,10 @@ def severity_score(report):
 
 
 def parse_timestamp_seconds(finding):
-    """Extract timestamp in seconds from a finding string."""
+    """Extract timestamp in seconds from a finding string or dict."""
+    text = finding["text"] if isinstance(finding, dict) else finding
     try:
-        match = re.search(r'\[(\d+):(\d+)', finding)
+        match = re.search(r'\[(\d+):(\d+)', text)
         if match:
             return int(match.group(1)) * 60 + int(match.group(2))
     except Exception:
@@ -71,26 +155,57 @@ def parse_timestamp_seconds(finding):
     return 0
 
 
+def finding_text(finding):
+    """Get display text from a finding (dict or string)."""
+    if isinstance(finding, dict):
+        return finding.get("text", str(finding))
+    return finding
+
+
+def finding_severity(finding):
+    """Get severity from a finding (dict or string)."""
+    if isinstance(finding, dict):
+        return finding.get("severity", "MINOR")
+    return _normalize_severity(finding)
+
+
+def finding_confidence(finding):
+    """Get confidence from a finding (dict or string)."""
+    if isinstance(finding, dict):
+        return finding.get("confidence", 70)
+    return 70
+
+
 def log_feedback(finding, decision, video_id, ruleset, platforms, jurisdictions):
     """Append a reviewer decision to the feedback log."""
+    f_text = finding_text(finding)
     entry = {
         "timestamp": datetime.now().isoformat(),
         "video_id": video_id,
-        "finding": finding,
+        "finding": f_text,
         "decision": decision,
         "ruleset": ruleset,
         "platforms": platforms,
         "jurisdictions": jurisdictions,
     }
-    log.info(f"Feedback logged: {decision} — {finding[:60]}")
-    with open("feedback_log.json", "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    log.info(f"Feedback logged: {decision} — {f_text[:60]}")
+    try:
+        with open("feedback_log.json", "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        log.error(f"Failed to write feedback log: {e}")
 
 
 def load_feedback_log():
     try:
         with open("feedback_log.json", "r") as f:
-            return [json.loads(l) for l in f.readlines()]
+            entries = []
+            for l in f.readlines():
+                try:
+                    entries.append(json.loads(l))
+                except json.JSONDecodeError:
+                    continue
+            return entries
     except FileNotFoundError:
         return []
 
@@ -138,6 +253,9 @@ def save_ground_truth(data):
 
 def compute_metrics(ground_truth_violations, system_findings):
     """Compare ground truth list against system findings list."""
+    # normalize findings to strings
+    sf_texts = [finding_text(f) for f in system_findings]
+
     tp = 0
     fp = 0
     fn = 0
@@ -146,7 +264,7 @@ def compute_metrics(ground_truth_violations, system_findings):
     for gt in ground_truth_violations:
         gt_lower = gt.lower()
         found = False
-        for i, sf in enumerate(system_findings):
+        for i, sf in enumerate(sf_texts):
             if i not in matched:
                 gt_words = set(gt_lower.split())
                 sf_words = set(sf.lower().split())
@@ -159,7 +277,7 @@ def compute_metrics(ground_truth_violations, system_findings):
         if not found:
             fn += 1
 
-    fp = len(system_findings) - len(matched)
+    fp = len(sf_texts) - len(matched)
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
@@ -226,6 +344,7 @@ For each finding:
 - Precise description of what was detected
 - Which rule it violates
 - Severity: CRITICAL / MAJOR / MINOR
+- Confidence: 0-100 (how certain you are this is a real violation)
 - Recommended action
 If nothing found in a category, state: NOT DETECTED.
 
@@ -236,6 +355,7 @@ For each finding:
 - Description of audio content
 - Whether clearance or censorship is required
 - Severity: CRITICAL / MAJOR / MINOR
+- Confidence: 0-100
 
 {rights_section}
 
