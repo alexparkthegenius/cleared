@@ -58,7 +58,7 @@ if not _api_key:
     log.error("TWELVELABS_API_KEY not set — API calls will fail")
 else:
     log.info("API key loaded successfully")
-client = TwelveLabs(api_key=_api_key) if _api_key else None
+client = TwelveLabs(api_key=_api_key, timeout=300.0) if _api_key else None
 
 # ── API HELPERS (need client + st.cache) ─────────────────────
 @st.cache_data(ttl=60)
