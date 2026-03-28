@@ -584,31 +584,13 @@ with st.sidebar:
     st.markdown('<div style="margin-top:0.75rem"></div>', unsafe_allow_html=True)
     run = st.button("Run Compliance Check", width='stretch')
 
-# ── THEATER PLAYER ────────────────────────────────────────────
-_tv_url = None
-if selected_video_id:
-    _tv_url = fetch_video_url(selected_video_id, selected_index_id)
-if _tv_url:
-    video_player(
-        _tv_url,
-        seek_to=st.session_state.get("seek_to", 0),
-        findings=st.session_state.get("findings", []),
-    )
-else:
-    _msg = "Upload a video to get started" if not selected_video_id else "Video processing — player will appear when ready"
-    st.markdown(
-        f'<div style="background:#111;border-radius:8px;height:420px;display:flex;align-items:center;'
-        f'justify-content:center;color:#555;font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;'
-        f'letter-spacing:0.05em;">{_msg}</div>',
-        unsafe_allow_html=True
-    )
-
-
 # ── RUN ───────────────────────────────────────────────────────
 _overlay_ph = st.empty()
 
 if run:
-    if not selected_platforms and not selected_jurisdictions:
+    if not selected_video_id:
+        st.error("Upload or select a video first.")
+    elif not selected_platforms and not selected_jurisdictions:
         st.error("Select at least one platform or jurisdiction.")
     else:
         _overlay_ph.markdown(LOADING_OVERLAY, unsafe_allow_html=True)
@@ -624,11 +606,14 @@ if run:
             log.info(f"Parsed {len(findings)} findings")
             for i, f in enumerate(findings):
                 log.info(f"  Finding {i+1}: {f[:100]}")
+            # fetch video URL only after successful analysis
+            _video_url = fetch_video_url(selected_video_id, selected_index_id)
             st.session_state.report = response.data
             st.session_state.findings = findings
             st.session_state.video_id = selected_video_id
             st.session_state.index_id = selected_index_id
             st.session_state.video_label = selected_video_label
+            st.session_state.video_url = _video_url
             st.session_state.risk_score = severity_score(response.data)
             st.session_state.platforms = selected_platforms
             st.session_state.jurisdictions = selected_jurisdictions
@@ -642,6 +627,33 @@ if run:
             st.error(f"Analysis failed: {e}")
         finally:
             _overlay_ph.empty()
+
+# ── THEATER PLAYER ────────────────────────────────────────────
+# Only shows AFTER analysis has run — video source selection is decoupled
+if "report" in st.session_state and st.session_state.get("video_url"):
+    video_player(
+        st.session_state.video_url,
+        seek_to=st.session_state.get("seek_to", 0),
+        findings=st.session_state.get("findings", []),
+    )
+elif "report" in st.session_state:
+    st.markdown(
+        '<div style="background:#111;border-radius:8px;height:420px;display:flex;align-items:center;'
+        'justify-content:center;color:#555;font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;'
+        'letter-spacing:0.05em;">Video URL unavailable — analysis results below</div>',
+        unsafe_allow_html=True
+    )
+else:
+    # pre-analysis state: show instructions
+    st.markdown(
+        '<div style="background:#111;border-radius:8px;height:420px;display:flex;align-items:center;'
+        'justify-content:center;color:#555;font-family:\'JetBrains Mono\',monospace;font-size:0.78rem;'
+        'letter-spacing:0.05em;text-align:center;line-height:2;">'
+        '1. Upload or select a video<br>'
+        '2. Choose target platforms + jurisdictions<br>'
+        '3. Click Run Compliance Check</div>',
+        unsafe_allow_html=True
+    )
 
 # ── RESULTS ───────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
