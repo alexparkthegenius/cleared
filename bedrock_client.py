@@ -120,10 +120,9 @@ def run_pegasus_analysis(video_s3_uri=None, video_bytes=None, prompt=""):
         return None
 
     try:
-        # build video input
+        # build mediaSource — top-level, not nested under "video"
         if video_s3_uri:
-            parts = video_s3_uri.replace("s3://", "").split("/", 1)
-            video_input = {
+            media_source = {
                 "s3Location": {
                     "uri": video_s3_uri,
                     "bucketOwner": os.environ.get("AWS_ACCOUNT_ID", ""),
@@ -132,17 +131,16 @@ def run_pegasus_analysis(video_s3_uri=None, video_bytes=None, prompt=""):
             log.info(f"Pegasus input: S3 URI {video_s3_uri[:60]}")
         elif video_bytes:
             video_b64 = base64.b64encode(video_bytes).decode("utf-8")
-            video_input = {"base64String": video_b64}
+            media_source = {"base64String": video_b64}
             log.info(f"Pegasus input: base64 ({len(video_bytes)} bytes)")
         else:
             log.error("No video input provided")
             return None
 
         request_body = {
-            "prompt": prompt,
-            "video": {
-                "mediaSource": video_input,
-            },
+            "inputPrompt": prompt,
+            "mediaSource": media_source,
+            "temperature": 0,
         }
 
         log.info(f"Invoking Bedrock Pegasus ({PEGASUS_MODEL_ID})...")
@@ -236,11 +234,14 @@ def search_with_marengo(video_s3_uri=None, video_bytes=None, query="", embedding
 
 
 def _extract_text(response_body):
-    """Extract text content from a Bedrock model response."""
+    """Extract text content from a Bedrock model response.
+    Pegasus returns: {"message": "...", "finishReason": "stop"}
+    """
     if isinstance(response_body, str):
         return response_body
     if isinstance(response_body, dict):
-        for key in ["text", "output", "completion", "content", "result"]:
+        # Pegasus format: "message" key
+        for key in ["message", "text", "output", "completion", "content", "result"]:
             if key in response_body:
                 val = response_body[key]
                 if isinstance(val, str):
@@ -249,5 +250,6 @@ def _extract_text(response_body):
                     if isinstance(val[0], dict):
                         return val[0].get("text", json.dumps(val[0]))
                     return str(val[0])
+        log.warning(f"_extract_text: no known text key in response, keys={list(response_body.keys())}")
         return json.dumps(response_body, indent=2)
     return str(response_body)
