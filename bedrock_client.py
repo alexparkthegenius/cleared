@@ -1,10 +1,13 @@
-"""Bedrock wrapper for TwelveLabs Pegasus and Marengo model inference."""
+"""Bedrock wrapper for TwelveLabs Pegasus (analysis) and Marengo (search/retrieval).
+
+All model inference goes through this module. No TwelveLabs SDK for model calls.
+Video input is S3 URI or local file path.
+"""
 
 import os
 import json
 import base64
 import logging
-import requests
 
 log = logging.getLogger("cleared.bedrock")
 
@@ -13,125 +16,128 @@ PEGASUS_MODEL_ID = "us.twelvelabs.pegasus-1-2-v1:0"
 MARENGO_MODEL_ID = "us.twelvelabs.marengo-embed-2-7-v1:0"
 
 _bedrock_client = None
+_s3_client = None
+
+S3_BUCKET = os.environ.get("CLEARED_S3_BUCKET", "cleared-compliance-videos")
+S3_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
 
 
-def init_bedrock():
-    """Initialize boto3 Bedrock runtime client. Returns None if AWS creds not configured."""
+def _get_bedrock():
+    """Lazy-init Bedrock runtime client."""
     global _bedrock_client
     if _bedrock_client:
         return _bedrock_client
-
-    aws_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
-    aws_secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-    aws_region = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-
-    if not aws_key or not aws_secret:
-        log.warning("AWS credentials not set — Bedrock calls will fall back to TwelveLabs SDK")
-        return None
-
     try:
         import boto3
         _bedrock_client = boto3.client(
-            service_name="bedrock-runtime",
-            region_name=aws_region,
-            aws_access_key_id=aws_key,
-            aws_secret_access_key=aws_secret,
+            "bedrock-runtime",
+            region_name=S3_REGION,
         )
-        log.info(f"Bedrock client initialized (region={aws_region})")
+        log.info(f"Bedrock client initialized (region={S3_REGION})")
         return _bedrock_client
     except Exception as e:
-        log.error(f"Failed to initialize Bedrock client: {e}")
+        log.error(f"Bedrock init failed: {e}")
         return None
 
 
-def _download_video_bytes(video_url, max_mb=100):
-    """Download video from URL and return bytes. Handles HLS by fetching the master URL."""
+def _get_s3():
+    """Lazy-init S3 client."""
+    global _s3_client
+    if _s3_client:
+        return _s3_client
     try:
-        # For HLS streams, we need the actual video segments — try direct download first
-        if ".m3u8" in video_url:
-            log.info("HLS URL detected — attempting direct segment download")
-            # Get the manifest
-            resp = requests.get(video_url, timeout=30)
-            if resp.status_code != 200:
-                log.error(f"Failed to fetch HLS manifest: {resp.status_code}")
-                return None
-            # Find the highest quality stream URL
-            lines = resp.text.strip().split("\n")
-            segment_urls = [l for l in lines if l.startswith("http") or l.endswith(".ts") or l.endswith(".mp4")]
-            if not segment_urls:
-                # Try to find a rendition URL
-                for line in lines:
-                    if line.strip() and not line.startswith("#"):
-                        if line.startswith("http"):
-                            segment_urls.append(line.strip())
-                        else:
-                            # relative URL
-                            base = video_url.rsplit("/", 1)[0]
-                            segment_urls.append(f"{base}/{line.strip()}")
-
-            if not segment_urls:
-                log.warning("Could not extract video segments from HLS manifest")
-                return None
-
-            # Download and concatenate segments
-            video_bytes = b""
-            for seg_url in segment_urls:
-                seg_resp = requests.get(seg_url, timeout=60)
-                if seg_resp.status_code == 200:
-                    video_bytes += seg_resp.content
-                if len(video_bytes) > max_mb * 1024 * 1024:
-                    log.warning(f"Video exceeds {max_mb}MB limit, truncating")
-                    break
-
-            if video_bytes:
-                log.info(f"Downloaded {len(video_bytes)} bytes from HLS stream")
-                return video_bytes
-            return None
-        else:
-            # Direct video URL
-            resp = requests.get(video_url, timeout=120, stream=True)
-            if resp.status_code != 200:
-                log.error(f"Failed to download video: {resp.status_code}")
-                return None
-            video_bytes = resp.content
-            log.info(f"Downloaded {len(video_bytes)} bytes from direct URL")
-            return video_bytes
+        import boto3
+        _s3_client = boto3.client("s3", region_name=S3_REGION)
+        log.info("S3 client initialized")
+        return _s3_client
     except Exception as e:
-        log.error(f"Video download failed: {e}")
+        log.error(f"S3 init failed: {e}")
         return None
 
 
-def analyze_video_pegasus(video_url, prompt):
-    """Run Pegasus analysis on a video via Bedrock.
+def is_bedrock_available():
+    """Check if AWS credentials are configured."""
+    return bool(os.environ.get("AWS_ACCESS_KEY_ID")) and bool(os.environ.get("AWS_SECRET_ACCESS_KEY"))
 
-    Args:
-        video_url: HLS or direct URL to the video
-        prompt: The compliance analysis prompt
 
-    Returns:
-        Report text string, or None if Bedrock is unavailable/fails
+def upload_to_s3(file_bytes, filename):
+    """Upload video bytes to S3. Returns s3:// URI."""
+    s3 = _get_s3()
+    if not s3:
+        log.error("S3 client not available")
+        return None
+    try:
+        key = f"uploads/{filename}"
+        s3.put_object(Bucket=S3_BUCKET, Key=key, Body=file_bytes)
+        uri = f"s3://{S3_BUCKET}/{key}"
+        log.info(f"Uploaded to S3: {uri}")
+        return uri
+    except Exception as e:
+        log.error(f"S3 upload failed: {e}")
+        return None
+
+
+def get_s3_presigned_url(s3_uri, expires_in=3600):
+    """Generate a presigned URL for video playback from S3 URI."""
+    s3 = _get_s3()
+    if not s3 or not s3_uri:
+        return None
+    try:
+        # parse s3://bucket/key
+        parts = s3_uri.replace("s3://", "").split("/", 1)
+        bucket = parts[0]
+        key = parts[1] if len(parts) > 1 else ""
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+        log.info(f"Presigned URL generated for {s3_uri[:50]}...")
+        return url
+    except Exception as e:
+        log.error(f"Presigned URL failed: {e}")
+        return None
+
+
+# ── PEGASUS: Video Analysis ──────────────────────────────────
+
+def run_pegasus_analysis(video_s3_uri=None, video_bytes=None, prompt=""):
+    """Run Pegasus analysis via Bedrock.
+
+    Accepts either:
+    - video_s3_uri: s3://bucket/key reference
+    - video_bytes: raw bytes (will be base64 encoded)
+
+    Returns: report text string, or None on failure.
     """
-    bedrock = init_bedrock()
+    bedrock = _get_bedrock()
     if not bedrock:
         return None
 
     try:
-        log.info(f"Pegasus via Bedrock: downloading video from {video_url[:60]}...")
-        video_bytes = _download_video_bytes(video_url)
-        if not video_bytes:
-            log.error("Could not download video for Bedrock analysis")
+        # build video input
+        if video_s3_uri:
+            parts = video_s3_uri.replace("s3://", "").split("/", 1)
+            video_input = {
+                "s3Location": {
+                    "uri": video_s3_uri,
+                    "bucketOwner": os.environ.get("AWS_ACCOUNT_ID", ""),
+                }
+            }
+            log.info(f"Pegasus input: S3 URI {video_s3_uri[:60]}")
+        elif video_bytes:
+            video_b64 = base64.b64encode(video_bytes).decode("utf-8")
+            video_input = {"base64String": video_b64}
+            log.info(f"Pegasus input: base64 ({len(video_bytes)} bytes)")
+        else:
+            log.error("No video input provided")
             return None
-
-        video_b64 = base64.b64encode(video_bytes).decode("utf-8")
-        log.info(f"Video encoded: {len(video_b64)} chars base64 ({len(video_bytes)} bytes raw)")
 
         request_body = {
             "prompt": prompt,
             "video": {
-                "mediaSource": {
-                    "base64String": video_b64
-                }
-            }
+                "mediaSource": video_input,
+            },
         }
 
         log.info(f"Invoking Bedrock Pegasus ({PEGASUS_MODEL_ID})...")
@@ -143,27 +149,99 @@ def analyze_video_pegasus(video_url, prompt):
         )
 
         response_body = json.loads(response["body"].read())
-        log.info(f"Bedrock Pegasus response received: {len(str(response_body))} chars")
+        log.info(f"Pegasus response: {len(str(response_body))} chars")
 
-        # Extract text from response — format may vary
-        if isinstance(response_body, dict):
-            # Try common response fields
-            for key in ["text", "output", "completion", "content", "result"]:
-                if key in response_body:
-                    result = response_body[key]
-                    if isinstance(result, str):
-                        return result
-                    if isinstance(result, list) and result:
-                        return str(result[0].get("text", result[0])) if isinstance(result[0], dict) else str(result[0])
-            # If none of those keys, return the whole thing as string
-            return json.dumps(response_body, indent=2)
-        return str(response_body)
+        # extract text from response
+        return _extract_text(response_body)
 
     except Exception as e:
-        log.error(f"Bedrock Pegasus analysis failed: {e}")
+        log.error(f"Pegasus analysis failed: {e}")
         return None
 
 
-def is_bedrock_available():
-    """Check if Bedrock credentials are configured."""
-    return bool(os.environ.get("AWS_ACCESS_KEY_ID")) and bool(os.environ.get("AWS_SECRET_ACCESS_KEY"))
+# ── MARENGO: Semantic Search / Retrieval ─────────────────────
+
+def search_with_marengo(video_s3_uri=None, video_bytes=None, query="", embedding_options=None):
+    """Run Marengo semantic search/embedding via Bedrock.
+
+    Use for:
+    - Finding specific scenes/moments in video
+    - Semantic retrieval of relevant segments
+    - Video similarity/classification
+
+    Returns: embedding results or search matches, or None on failure.
+    """
+    bedrock = _get_bedrock()
+    if not bedrock:
+        return None
+
+    try:
+        if embedding_options is None:
+            embedding_options = ["visual-text", "audio"]
+
+        if video_s3_uri:
+            video_input = {
+                "s3Location": {
+                    "uri": video_s3_uri,
+                    "bucketOwner": os.environ.get("AWS_ACCOUNT_ID", ""),
+                }
+            }
+            input_type = "video"
+        elif video_bytes:
+            video_b64 = base64.b64encode(video_bytes).decode("utf-8")
+            video_input = {"base64String": video_b64}
+            input_type = "video"
+        elif query:
+            # text-only query for text embeddings
+            input_type = "text"
+            video_input = None
+        else:
+            log.error("No input provided for Marengo")
+            return None
+
+        if input_type == "text":
+            request_body = {
+                "inputType": "text",
+                "text": query,
+                "embeddingOption": embedding_options,
+            }
+        else:
+            request_body = {
+                "inputType": "video",
+                "mediaSource": video_input,
+                "embeddingOption": embedding_options,
+            }
+
+        log.info(f"Invoking Bedrock Marengo ({MARENGO_MODEL_ID}), type={input_type}...")
+        response = bedrock.invoke_model(
+            modelId=MARENGO_MODEL_ID,
+            body=json.dumps(request_body),
+            contentType="application/json",
+            accept="application/json",
+        )
+
+        response_body = json.loads(response["body"].read())
+        log.info(f"Marengo response: {len(str(response_body))} chars")
+        return response_body
+
+    except Exception as e:
+        log.error(f"Marengo search failed: {e}")
+        return None
+
+
+def _extract_text(response_body):
+    """Extract text content from a Bedrock model response."""
+    if isinstance(response_body, str):
+        return response_body
+    if isinstance(response_body, dict):
+        for key in ["text", "output", "completion", "content", "result"]:
+            if key in response_body:
+                val = response_body[key]
+                if isinstance(val, str):
+                    return val
+                if isinstance(val, list) and val:
+                    if isinstance(val[0], dict):
+                        return val[0].get("text", json.dumps(val[0]))
+                    return str(val[0])
+        return json.dumps(response_body, indent=2)
+    return str(response_body)

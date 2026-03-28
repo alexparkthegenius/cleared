@@ -9,7 +9,6 @@ from datetime import datetime, date, timedelta
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
-from twelvelabs import TwelveLabs
 
 # ── LOGGING SETUP ─────────────────────────────────────────────
 logging.basicConfig(
@@ -42,7 +41,7 @@ _ui_handler.setFormatter(logging.Formatter("%(asctime)s", datefmt="%H:%M:%S"))
 logging.getLogger("cleared").addHandler(_ui_handler)
 logging.getLogger("cleared.helpers").addHandler(_ui_handler)
 
-from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS, DEFAULT_INDEX_ID
+from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS
 from helpers import (
     parse_findings, severity_score, parse_timestamp_seconds, build_prompt,
     finding_text, finding_severity, finding_confidence,
@@ -51,83 +50,16 @@ from helpers import (
     get_expiring_rights, load_ground_truth, save_ground_truth, compute_metrics,
 )
 from styles import get_app_css
-from bedrock_client import analyze_video_pegasus, is_bedrock_available
+from bedrock_client import (
+    run_pegasus_analysis, search_with_marengo,
+    is_bedrock_available, upload_to_s3, get_s3_presigned_url,
+)
 
 load_dotenv()
-_api_key = os.environ.get("TWELVELABS_API_KEY", "")
-if not _api_key:
-    log.error("TWELVELABS_API_KEY not set — API calls will fail")
+if is_bedrock_available():
+    log.info("AWS Bedrock credentials loaded")
 else:
-    log.info("API key loaded successfully")
-client = TwelveLabs(api_key=_api_key, timeout=300.0) if _api_key else None
-
-# ── API HELPERS (need client + st.cache) ─────────────────────
-@st.cache_data(ttl=60)
-def fetch_indexes():
-    try:
-        indexes = list(client.indexes.list())
-        return [(idx.index_name or idx.id, idx.id) for idx in indexes]
-    except Exception:
-        return []
-
-def get_or_create_index():
-    """Get the first user-owned index, or create one."""
-    try:
-        log.info("Fetching indexes from TwelveLabs...")
-        indexes = list(client.indexes.list())
-        log.info(f"Found {len(indexes)} indexes: {[(idx.index_name, idx.id) for idx in indexes]}")
-        for idx in indexes:
-            name = idx.index_name or ""
-            if "sample" not in name.lower():
-                log.info(f"Using index: {name} ({idx.id})")
-                return idx.id
-        # no non-sample index found, create one
-        log.info("No user index found, creating 'cleared-compliance'...")
-        new_idx = client.indexes.create(
-            index_name="cleared-compliance",
-            models=[{"model_name": "marengo", "options": ["visual", "conversation", "text_in_video", "logo"]}],
-        )
-        log.info(f"Created index: {new_idx.id}")
-        return new_idx.id
-    except Exception as e:
-        log.error(f"Index lookup failed: {e}\n{traceback.format_exc()}")
-        try:
-            new_idx = client.indexes.create(
-                index_name="cleared-compliance",
-                models=[{"model_name": "marengo", "options": ["visual", "conversation", "text_in_video", "logo"]}],
-            )
-            log.info(f"Fallback index created: {new_idx.id}")
-            return new_idx.id
-        except Exception as e2:
-            log.error(f"Fallback index creation failed: {e2}\n{traceback.format_exc()}")
-            return None
-
-@st.cache_data(ttl=60)
-def fetch_videos(index_id):
-    try:
-        videos = list(client.assets.list(index_id=index_id))
-        return [
-            (v.metadata.filename if hasattr(v, 'metadata') and v.metadata and v.metadata.filename else v.id, v.id)
-            for v in videos
-        ]
-    except Exception:
-        try:
-            tasks = list(client.tasks.list(index_id=index_id))
-            return [(t.video_id, t.video_id) for t in tasks if t.status == "ready"]
-        except Exception:
-            return []
-
-@st.cache_data(ttl=3600)
-def fetch_video_url(video_id, index_id):
-    try:
-        log.info(f"Fetching video URL: video={video_id}, index={index_id}")
-        video = client.indexes.videos.retrieve(index_id, video_id)
-        url = video.hls.video_url
-        log.info(f"Video URL resolved: {url[:80]}...")
-        return url
-    except Exception as e:
-        log.error(f"fetch_video_url failed: video={video_id}, index={index_id} — {e}")
-        return None
+    log.warning("AWS credentials not set — Bedrock analysis will not work")
 
 # ── VIDEO PLAYER COMPONENT ───────────────────────────────────
 def video_player(video_url: str, seek_to: float = 0, findings: list = None):
@@ -480,12 +412,11 @@ with st.sidebar:
 
     # ── 1. VIDEO SOURCE ──
     _sidebar_label("1. Video")
-    video_source = st.radio("Source", ["Upload", "TwelveLabs", "Iconik"],
+    video_source = st.radio("Source", ["Upload", "S3 URI", "Iconik"],
                             horizontal=True, label_visibility="collapsed")
 
-    selected_video_id = ""
-    selected_index_id = DEFAULT_INDEX_ID
-    selected_task_id = ""
+    video_s3_uri = ""
+    video_local_bytes = None
     selected_video_label = ""
 
     if video_source == "Upload":
@@ -493,61 +424,36 @@ with st.sidebar:
         if uploaded_file:
             upload_key = f"uploaded_{uploaded_file.name}_{uploaded_file.size}"
             if upload_key not in st.session_state:
-                try:
-                    import tempfile
-                    log.info(f"Upload started: {uploaded_file.name} ({uploaded_file.size} bytes)")
-                    upload_index_id = get_or_create_index()
-                    if not upload_index_id:
-                        raise Exception("Could not find or create an index. Check your API key.")
-                    log.info(f"Using index {upload_index_id} for upload")
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-                        tmp.write(uploaded_file.read())
-                        tmp_path = tmp.name
-                    task = client.tasks.create(
-                        index_id=upload_index_id,
-                        video_file=open(tmp_path, "rb"),
-                    )
-                    log.info(f"Upload task created: video_id={task.video_id}, task_id={task.id}")
-                    os.unlink(tmp_path)
+                file_bytes = uploaded_file.read()
+                log.info(f"Upload: {uploaded_file.name} ({len(file_bytes)} bytes)")
+                # try S3 upload
+                s3_uri = upload_to_s3(file_bytes, uploaded_file.name)
+                if s3_uri:
                     st.session_state[upload_key] = {
-                        "video_id": task.video_id,
-                        "task_id": task.id,
-                        "index_id": upload_index_id,
+                        "s3_uri": s3_uri,
                         "label": uploaded_file.name,
                     }
-                except Exception as e:
-                    log.error(f"Upload failed: {e}\n{traceback.format_exc()}")
-                    st.error(f"Upload failed: {e}")
+                    log.info(f"Video stored at {s3_uri}")
+                else:
+                    # S3 unavailable — store bytes in session for base64 analysis
+                    st.session_state[upload_key] = {
+                        "s3_uri": "",
+                        "local_bytes": file_bytes,
+                        "label": uploaded_file.name,
+                    }
+                    log.info("S3 unavailable — video stored locally for base64 analysis")
 
             upload_info = st.session_state.get(upload_key, {})
-            selected_video_id = upload_info.get("video_id", "")
-            selected_index_id = upload_info.get("index_id", DEFAULT_INDEX_ID)
-            selected_task_id = upload_info.get("task_id", "")
+            video_s3_uri = upload_info.get("s3_uri", "")
+            video_local_bytes = upload_info.get("local_bytes")
             selected_video_label = upload_info.get("label", uploaded_file.name)
 
-    elif video_source == "TwelveLabs":
-        # index picker
-        indexes = fetch_indexes()
-        if not indexes:
-            st.caption("No indexes found. Check your API key.")
-        else:
-            idx_names = [name for name, _ in indexes]
-            idx_map = {name: idx_id for name, idx_id in indexes}
-            chosen_idx = st.selectbox("Index", idx_names, label_visibility="collapsed")
-            if chosen_idx:
-                chosen_idx_id = idx_map[chosen_idx]
-                videos = fetch_videos(chosen_idx_id)
-                if videos:
-                    vid_names = [name for name, _ in videos]
-                    vid_map = {name: vid_id for name, vid_id in videos}
-                    chosen_vid = st.selectbox("Video", vid_names, label_visibility="collapsed")
-                    if chosen_vid:
-                        selected_video_id = vid_map[chosen_vid]
-                        selected_index_id = chosen_idx_id
-                        selected_task_id = ""
-                        selected_video_label = chosen_vid
-                else:
-                    st.caption("No videos in this index.")
+    elif video_source == "S3 URI":
+        s3_input = st.text_input("S3 URI", placeholder="s3://bucket/path/video.mp4",
+                                  label_visibility="collapsed")
+        if s3_input and s3_input.startswith("s3://"):
+            video_s3_uri = s3_input
+            selected_video_label = s3_input.split("/")[-1]
 
     elif video_source == "Iconik":
         st.markdown('<p style="font-size:0.72rem;color:var(--text-muted);line-height:1.5;">'
@@ -555,16 +461,14 @@ with st.sidebar:
         iconik_url = st.text_input("Iconik Asset URL", placeholder="https://app.iconik.io/asset/...",
                                     label_visibility="collapsed")
         if iconik_url:
-            st.caption(f"Iconik asset linked: {iconik_url[:50]}...")
-            # store as reference — actual Iconik API integration would resolve to video
             st.session_state["iconik_url"] = iconik_url
             selected_video_label = f"Iconik: {iconik_url.split('/')[-1][:20]}"
-            st.info("Iconik integration: asset reference stored. Upload the video file to analyze.")
+            st.info("Iconik: asset reference stored. Provide S3 URI or upload file for analysis.")
 
     # show source status
     if selected_video_label:
         st.caption(f"Source: {selected_video_label}")
-    elif video_source == "Upload":
+    else:
         st.caption("No video selected")
 
     # ── 2. TARGET PLATFORMS ──
@@ -637,68 +541,37 @@ with st.sidebar:
 
 # ── RUN ───────────────────────────────────────────────────────
 if run:
-    if not selected_video_id:
+    if not video_s3_uri and not video_local_bytes:
         st.error("Upload or select a video first.")
     elif not selected_platforms and not selected_jurisdictions:
         st.error("Select at least one platform or jurisdiction.")
+    elif not is_bedrock_available():
+        st.error("AWS Bedrock credentials not configured. Add AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.")
     else:
         _run_status = st.empty()
         _run_progress = st.progress(0)
         try:
-            # Step 1: wait for indexing if needed
-            if selected_task_id:
-                _run_status.caption("Waiting for video indexing...")
-                log.info(f"Checking indexing status for task {selected_task_id}...")
-                _max_wait = 300
-                _waited = 0
-                while _waited < _max_wait:
-                    task_status = client.tasks.retrieve(selected_task_id)
-                    status = getattr(task_status, 'status', 'unknown')
-                    log.info(f"Task {selected_task_id} status: {status} ({_waited}s)")
-                    _run_progress.progress(min(_waited / 60, 0.3))
-                    if status == "ready":
-                        log.info("Video indexing complete.")
-                        break
-                    elif status == "failed":
-                        raise Exception(f"Video indexing failed (task {selected_task_id})")
-                    time.sleep(5)
-                    _waited += 5
-                if _waited >= _max_wait:
-                    raise Exception(f"Video indexing timed out after {_max_wait}s")
-
-            # Step 2: run analysis (Bedrock Pegasus → fallback to TwelveLabs SDK)
+            # Step 1: run Pegasus analysis via Bedrock
+            _run_status.caption("Running compliance analysis via Bedrock Pegasus...")
+            _run_progress.progress(0.2)
             prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
-            log.info(f"Starting analysis: video={selected_video_id}, ruleset={ruleset_name}, platforms={selected_platforms}, jurisdictions={selected_jurisdictions}")
+            log.info(f"Starting Pegasus analysis: s3={video_s3_uri or 'local'}, ruleset={ruleset_name}")
             log.info(f"Prompt length: {len(prompt)} chars")
             _t0 = time.time()
 
-            report_data = None
-            _analysis_backend = "twelvelabs"
-
-            # Try Bedrock Pegasus first
-            if is_bedrock_available():
-                _run_status.caption("Running compliance analysis via Bedrock Pegasus...")
-                _run_progress.progress(0.35)
-                _video_url_for_analysis = fetch_video_url(selected_video_id, selected_index_id)
-                if _video_url_for_analysis:
-                    report_data = analyze_video_pegasus(_video_url_for_analysis, prompt)
-                    if report_data:
-                        _analysis_backend = "bedrock-pegasus"
-                        log.info("Analysis completed via Bedrock Pegasus")
-
-            # Fallback to TwelveLabs SDK
+            report_data = run_pegasus_analysis(
+                video_s3_uri=video_s3_uri if video_s3_uri else None,
+                video_bytes=video_local_bytes if not video_s3_uri else None,
+                prompt=prompt,
+            )
             if not report_data:
-                _run_status.caption("Running compliance analysis via TwelveLabs...")
-                _run_progress.progress(0.35)
-                log.info("Using TwelveLabs SDK for analysis" + (" (Bedrock unavailable)" if not is_bedrock_available() else " (Bedrock fallback)"))
-                response = client.analyze(video_id=selected_video_id, prompt=prompt)
-                report_data = getattr(response, 'data', None) or str(response)
+                raise Exception("Pegasus analysis returned no results. Check AWS credentials and video input.")
 
             _elapsed = round(time.time() - _t0, 1)
-            log.info(f"Analysis complete in {_elapsed}s via {_analysis_backend}, response length: {len(report_data)} chars")
-            _run_progress.progress(0.8)
+            log.info(f"Pegasus complete in {_elapsed}s, response: {len(report_data)} chars")
+            _run_progress.progress(0.7)
 
-            # Step 3: parse findings (compliance + rights → unified list)
+            # Step 2: parse findings (compliance + rights → unified list)
             _run_status.caption("Parsing findings...")
             compliance_findings = parse_findings(report_data)
             rights_entries_auto, rights_findings = parse_rights_from_report(report_data)
@@ -707,11 +580,19 @@ if run:
             for i, f in enumerate(findings):
                 log.info(f"  Finding {i+1} [{f.get('source','?')}]: {finding_text(f)[:100]}")
             st.session_state.rights_auto = rights_entries_auto
-            _run_progress.progress(0.9)
+            _run_progress.progress(0.85)
 
-            # Step 4: fetch video URL
+            # Step 3: resolve video playback URL
             _run_status.caption("Loading video player...")
-            _video_url = fetch_video_url(selected_video_id, selected_index_id)
+            if video_s3_uri:
+                _video_url = get_s3_presigned_url(video_s3_uri)
+            elif video_local_bytes:
+                # for local bytes, create a data URI or use streamlit's built-in
+                import base64 as _b64
+                _video_b64 = _b64.b64encode(video_local_bytes).decode()
+                _video_url = f"data:video/mp4;base64,{_video_b64}"
+            else:
+                _video_url = None
             _run_progress.progress(1.0)
 
             # compute risk score with breakdown
@@ -730,8 +611,7 @@ if run:
 
             st.session_state.report = report_data
             st.session_state.findings = findings
-            st.session_state.video_id = selected_video_id
-            st.session_state.index_id = selected_index_id
+            st.session_state.video_s3_uri = video_s3_uri
             st.session_state.video_label = selected_video_label
             st.session_state.video_url = _video_url
             st.session_state.risk_score = _risk_score
@@ -741,7 +621,7 @@ if run:
             st.session_state.ruleset = ruleset_name
             st.session_state.run_time = datetime.now().isoformat()
             st.session_state.analysis_duration = _elapsed
-            st.session_state.analysis_backend = _analysis_backend
+            st.session_state.analysis_backend = "bedrock-pegasus"
             st.session_state.seek_to = 0
             log.info(f"Risk score: {_risk_score}/100 — {_risk_explanation}")
         except Exception as e:
@@ -880,15 +760,15 @@ with tab_findings:
                         st.rerun()
 
                     if col_a.button("Approve", key=f"a_{i}"):
-                        log_feedback(finding, "approved", st.session_state.video_id, st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
+                        log_feedback(finding, "approved", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
                         st.session_state[f"decision_{i}"] = "approved"
 
                     if col_r.button("Reject", key=f"r_{i}"):
-                        log_feedback(finding, "rejected", st.session_state.video_id, st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
+                        log_feedback(finding, "rejected", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
                         st.session_state[f"decision_{i}"] = "rejected"
 
                     if col_e.button("Escalate", key=f"e_{i}"):
-                        log_feedback(finding, "escalated", st.session_state.video_id, st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
+                        log_feedback(finding, "escalated", st.session_state.get("video_s3_uri", ""), st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
                         st.session_state[f"decision_{i}"] = "escalated"
 
                     _decision = st.session_state.get(f"decision_{i}")
@@ -1031,7 +911,7 @@ with tab_rights:
             entries = load_rights_log()
             entries.append({"asset": r_asset, "type": r_type, "expiry_date": r_expiry.isoformat(),
                             "notes": r_notes, "added_at": datetime.now().isoformat(),
-                            "video_id": st.session_state.get("video_id", "")})
+                            "video_id": st.session_state.get("video_s3_uri", "")})
             save_rights_log(entries)
             st.success(f"added: {r_asset}")
 
@@ -1166,7 +1046,7 @@ with tab_export:
                 export_manifest = {
                     "report_id": f"cleared_{int(time.time())}",
                     "generated_at": datetime.now().isoformat(),
-                    "video_id": st.session_state.video_id,
+                    "video_id": st.session_state.get("video_s3_uri", ""),
                     "video_label": st.session_state.get("video_label", ""),
                     "ruleset": st.session_state.get("ruleset"),
                     "platforms": st.session_state.get("platforms"),
@@ -1212,7 +1092,7 @@ with tab_export:
                         "comment": ft
                     })
                 otio_export = {"OTIO_SCHEMA": "Timeline.1", "metadata": {"cleared_version": "1.0"},
-                               "name": f"Cleared — {st.session_state.video_id[:12]}", "markers": otio_markers}
+                               "name": f"Cleared — {st.session_state.get("video_s3_uri", "")[:12]}", "markers": otio_markers}
                 st.download_button("OTIO Markers", json.dumps(otio_export, indent=2),
                                    "cleared_markers.otio", "application/json", use_container_width=True)
             with col_audit:
@@ -1229,7 +1109,7 @@ with tab_gt:
     st.caption("Compare system findings against human-verified ground truth")
 
     gt_data = load_ground_truth()
-    video_key = st.session_state.get("video_id", "unknown")
+    video_key = st.session_state.get("video_s3_uri", st.session_state.get("video_label", "unknown"))
     current_ruleset = st.session_state.get("ruleset", "Broadcast Standards")
 
     gt_key = f"{video_key}__{current_ruleset}"

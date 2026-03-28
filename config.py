@@ -67,11 +67,5 @@ AUDIO_FLAGS = [
     "Unauthorized celebrity voice",
 ]
 
-# Default index (user's own)
-DEFAULT_INDEX_ID = "69c815ac699ef40d9d560957"
-
-# Demo video IDs (fallback — set after first upload)
-DEMO_VIDEO_ID = ""
-DEMO_INDEX_ID = "69c815ac699ef40d9d560957"
-DEMO_VIDEO_LABEL = "compliance-practice-10"
-DEMO_VIDEO_FILENAME = "compliance-practice-10.mp4"
+# S3 bucket for video storage (set via env var CLEARED_S3_BUCKET)
+DEFAULT_S3_BUCKET = "cleared-compliance-videos"
