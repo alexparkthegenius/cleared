@@ -42,7 +42,7 @@ _ui_handler.setFormatter(logging.Formatter("%(asctime)s", datefmt="%H:%M:%S"))
 logging.getLogger("cleared").addHandler(_ui_handler)
 logging.getLogger("cleared.helpers").addHandler(_ui_handler)
 
-from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS, DEMO_VIDEO_ID, DEMO_INDEX_ID, DEMO_VIDEO_LABEL
+from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS, DEFAULT_INDEX_ID, DEMO_VIDEO_ID, DEMO_INDEX_ID, DEMO_VIDEO_LABEL
 from helpers import (
     parse_findings, severity_score, parse_timestamp_seconds, build_prompt,
     log_feedback, load_feedback_log, load_rights_log, save_rights_log,
@@ -460,73 +460,46 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "webm"], label_visibility="collapsed")
 
     if uploaded_file:
-        # upload to TwelveLabs if not already done for this file
         upload_key = f"uploaded_{uploaded_file.name}_{uploaded_file.size}"
         if upload_key not in st.session_state:
-            with st.spinner(f"Indexing {uploaded_file.name}..."):
-                try:
-                    import tempfile
-                    log.info(f"Upload started: {uploaded_file.name} ({uploaded_file.size} bytes)")
-                    # get user's own index (not the demo one)
-                    upload_index_id = get_or_create_index()
-                    if not upload_index_id:
-                        raise Exception("Could not find or create an index. Check your API key.")
-                    log.info(f"Using index {upload_index_id} for upload")
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-                        tmp.write(uploaded_file.read())
-                        tmp_path = tmp.name
-                    log.info(f"Temp file written: {tmp_path}")
-                    task = client.tasks.create(
-                        index_id=upload_index_id,
-                        video_file=open(tmp_path, "rb"),
-                    )
-                    log.info(f"Upload task created: video_id={task.video_id}, task_id={task.id}, status={getattr(task, 'status', 'unknown')}")
-                    os.unlink(tmp_path)
-
-                    # wait for indexing to complete
-                    _status_ph = st.empty()
-                    _max_wait = 300  # 5 min max
-                    _waited = 0
-                    while _waited < _max_wait:
-                        try:
-                            task_status = client.tasks.retrieve(task.id)
-                            status = getattr(task_status, 'status', 'unknown')
-                            log.info(f"Task {task.id} status: {status} ({_waited}s elapsed)")
-                            _status_ph.caption(f"Processing: {status} ({_waited}s)...")
-                            if status == "ready":
-                                break
-                            elif status == "failed":
-                                raise Exception(f"Indexing failed for task {task.id}")
-                        except AttributeError:
-                            log.info(f"Task polling returned unexpected format, waiting... ({_waited}s)")
-                        time.sleep(5)
-                        _waited += 5
-                    _status_ph.empty()
-
-                    if _waited >= _max_wait:
-                        log.warning(f"Task {task.id} not ready after {_max_wait}s, proceeding anyway")
-
-                    st.session_state[upload_key] = {
-                        "video_id": task.video_id,
-                        "index_id": upload_index_id,
-                        "label": uploaded_file.name,
-                    }
-                    st.success(f"Indexed: {uploaded_file.name}")
-                except Exception as e:
-                    log.error(f"Upload failed: {e}\n{traceback.format_exc()}")
-                    st.error(f"Upload failed: {e}")
-                    st.session_state[upload_key] = {"video_id": DEMO_VIDEO_ID, "index_id": DEMO_INDEX_ID, "label": DEMO_VIDEO_LABEL}
+            try:
+                import tempfile
+                log.info(f"Upload started: {uploaded_file.name} ({uploaded_file.size} bytes)")
+                upload_index_id = get_or_create_index()
+                if not upload_index_id:
+                    raise Exception("Could not find or create an index. Check your API key.")
+                log.info(f"Using index {upload_index_id} for upload")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+                    tmp.write(uploaded_file.read())
+                    tmp_path = tmp.name
+                task = client.tasks.create(
+                    index_id=upload_index_id,
+                    video_file=open(tmp_path, "rb"),
+                )
+                log.info(f"Upload task created: video_id={task.video_id}, task_id={task.id}")
+                os.unlink(tmp_path)
+                st.session_state[upload_key] = {
+                    "video_id": task.video_id,
+                    "task_id": task.id,
+                    "index_id": upload_index_id,
+                    "label": uploaded_file.name,
+                }
+            except Exception as e:
+                log.error(f"Upload failed: {e}\n{traceback.format_exc()}")
+                st.error(f"Upload failed: {e}")
 
         upload_info = st.session_state.get(upload_key, {})
-        selected_video_id = upload_info.get("video_id", DEMO_VIDEO_ID)
-        selected_index_id = upload_info.get("index_id", DEMO_INDEX_ID)
+        selected_video_id = upload_info.get("video_id", "")
+        selected_index_id = upload_info.get("index_id", DEFAULT_INDEX_ID)
+        selected_task_id = upload_info.get("task_id", "")
         selected_video_label = upload_info.get("label", uploaded_file.name)
-        st.caption(f"Ready: {selected_video_label}")
+        st.caption(f"Source: {selected_video_label}")
     else:
-        st.caption(f"Demo: {DEMO_VIDEO_LABEL}")
-        selected_video_id = DEMO_VIDEO_ID
-        selected_index_id = DEMO_INDEX_ID
-        selected_video_label = DEMO_VIDEO_LABEL
+        selected_video_id = ""
+        selected_index_id = DEFAULT_INDEX_ID
+        selected_task_id = ""
+        selected_video_label = ""
+        st.caption("No video selected")
 
     # ── 2. TARGET PLATFORMS ──
     _sidebar_label("2. Target Platforms")
@@ -594,11 +567,30 @@ if run:
         st.error("Select at least one platform or jurisdiction.")
     else:
         _overlay_ph.markdown(LOADING_OVERLAY, unsafe_allow_html=True)
-        prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
-        log.info(f"Starting analysis: video={selected_video_id}, ruleset={ruleset_name}, platforms={selected_platforms}, jurisdictions={selected_jurisdictions}")
-        log.info(f"Prompt length: {len(prompt)} chars")
-        _t0 = time.time()
         try:
+            # if video was just uploaded, wait for indexing to finish now
+            if selected_task_id:
+                log.info(f"Checking indexing status for task {selected_task_id}...")
+                _max_wait = 300
+                _waited = 0
+                while _waited < _max_wait:
+                    task_status = client.tasks.retrieve(selected_task_id)
+                    status = getattr(task_status, 'status', 'unknown')
+                    log.info(f"Task {selected_task_id} status: {status} ({_waited}s)")
+                    if status == "ready":
+                        log.info("Video indexing complete.")
+                        break
+                    elif status == "failed":
+                        raise Exception(f"Video indexing failed (task {selected_task_id})")
+                    time.sleep(5)
+                    _waited += 5
+                if _waited >= _max_wait:
+                    raise Exception(f"Video indexing timed out after {_max_wait}s")
+
+            prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
+            log.info(f"Starting analysis: video={selected_video_id}, ruleset={ruleset_name}, platforms={selected_platforms}, jurisdictions={selected_jurisdictions}")
+            log.info(f"Prompt length: {len(prompt)} chars")
+            _t0 = time.time()
             response = client.analyze(video_id=selected_video_id, prompt=prompt)
             _elapsed = round(time.time() - _t0, 1)
             log.info(f"Analysis complete in {_elapsed}s, response length: {len(response.data)} chars")
@@ -606,7 +598,6 @@ if run:
             log.info(f"Parsed {len(findings)} findings")
             for i, f in enumerate(findings):
                 log.info(f"  Finding {i+1}: {f[:100]}")
-            # fetch video URL only after successful analysis
             _video_url = fetch_video_url(selected_video_id, selected_index_id)
             st.session_state.report = response.data
             st.session_state.findings = findings
