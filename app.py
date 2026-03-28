@@ -29,6 +29,31 @@ def fetch_indexes():
     except Exception:
         return []
 
+def get_or_create_index():
+    """Get the first user-owned index, or create one."""
+    try:
+        indexes = list(client.indexes.list())
+        for idx in indexes:
+            name = idx.index_name or ""
+            if "sample" not in name.lower():
+                return idx.id
+        # no non-sample index found, create one
+        new_idx = client.indexes.create(
+            index_name="cleared-compliance",
+            models=[{"model_name": "marengo", "options": ["visual", "conversation", "text_in_video", "logo"]}],
+        )
+        return new_idx.id
+    except Exception:
+        # fallback: create fresh
+        try:
+            new_idx = client.indexes.create(
+                index_name="cleared-compliance",
+                models=[{"model_name": "marengo", "options": ["visual", "conversation", "text_in_video", "logo"]}],
+            )
+            return new_idx.id
+        except Exception:
+            return None
+
 @st.cache_data(ttl=60)
 def fetch_videos(index_id):
     try:
@@ -392,27 +417,37 @@ with st.sidebar:
             with st.spinner(f"Indexing {uploaded_file.name}..."):
                 try:
                     import tempfile, os
+                    # get user's own index (not the demo one)
+                    upload_index_id = get_or_create_index()
+                    if not upload_index_id:
+                        raise Exception("Could not find or create an index. Check your API key.")
                     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
                         tmp.write(uploaded_file.read())
                         tmp_path = tmp.name
                     task = client.tasks.create(
-                        index_id=DEMO_INDEX_ID,
+                        index_id=upload_index_id,
                         video_file=open(tmp_path, "rb"),
                     )
-                    st.session_state[upload_key] = {"video_id": task.video_id, "label": uploaded_file.name}
+                    st.session_state[upload_key] = {
+                        "video_id": task.video_id,
+                        "index_id": upload_index_id,
+                        "label": uploaded_file.name,
+                    }
                     os.unlink(tmp_path)
                     st.success(f"Indexed: {uploaded_file.name}")
                 except Exception as e:
                     st.error(f"Upload failed: {e}")
-                    st.session_state[upload_key] = {"video_id": DEMO_VIDEO_ID, "label": DEMO_VIDEO_LABEL}
+                    st.session_state[upload_key] = {"video_id": DEMO_VIDEO_ID, "index_id": DEMO_INDEX_ID, "label": DEMO_VIDEO_LABEL}
 
         upload_info = st.session_state.get(upload_key, {})
         selected_video_id = upload_info.get("video_id", DEMO_VIDEO_ID)
+        selected_index_id = upload_info.get("index_id", DEMO_INDEX_ID)
         selected_video_label = upload_info.get("label", uploaded_file.name)
         st.caption(f"Ready: {selected_video_label}")
     else:
         st.caption(f"Demo: {DEMO_VIDEO_LABEL}")
         selected_video_id = DEMO_VIDEO_ID
+        selected_index_id = DEMO_INDEX_ID
         selected_video_label = DEMO_VIDEO_LABEL
 
     # ── 2. TARGET PLATFORMS ──
@@ -472,7 +507,7 @@ with st.sidebar:
     run = st.button("Run Compliance Check", width='stretch')
 
 # ── THEATER PLAYER ────────────────────────────────────────────
-_tv_url = fetch_video_url(DEMO_VIDEO_ID, DEMO_INDEX_ID)
+_tv_url = fetch_video_url(selected_video_id, selected_index_id)
 if _tv_url:
     video_player(
         _tv_url,
@@ -504,6 +539,7 @@ if run:
             st.session_state.report = response.data
             st.session_state.findings = parse_findings(response.data)
             st.session_state.video_id = selected_video_id
+            st.session_state.index_id = selected_index_id
             st.session_state.video_label = selected_video_label
             st.session_state.risk_score = severity_score(response.data)
             st.session_state.platforms = selected_platforms

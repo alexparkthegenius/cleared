@@ -67,8 +67,11 @@ AUDIO_FLAGS = [
     "Unauthorized celebrity voice",
 ]
 
-# Demo video IDs
+# Default index (user's own)
+DEFAULT_INDEX_ID = "69c8296a74e8033fe643bcdd"
+
+# Demo video IDs (fallback)
 DEMO_VIDEO_ID = "69bf04be251dc4f29f376218"
-DEMO_INDEX_ID = "69bf0452a434aab7c15a12b4"
+DEMO_INDEX_ID = "69c8296a74e8033fe643bcdd"
 DEMO_VIDEO_LABEL = "compliance-practice-10"
 DEMO_VIDEO_FILENAME = "compliance-practice-10.mp4"
