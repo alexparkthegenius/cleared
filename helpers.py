@@ -48,7 +48,13 @@ def parse_findings(report):
             text = " — ".join(parts)
             if not confidence:
                 confidence = _estimate_confidence(severity, description)
-            findings.append({"text": text, "severity": _normalize_severity(severity or text), "confidence": confidence})
+            findings.append({
+                "text": text,
+                "severity": _normalize_severity(severity or text),
+                "confidence": confidence,
+                "source": "compliance",
+                "rule": category or "Content flag",
+            })
             i += 1
             continue
 
@@ -56,7 +62,7 @@ def parse_findings(report):
             sev = _normalize_severity(line)
             conf_match = re.search(r'[Cc]onfidence[:\s]+(\d+)', line)
             confidence = min(int(conf_match.group(1)), 100) if conf_match else _estimate_confidence(sev, line)
-            findings.append({"text": line, "severity": sev, "confidence": confidence})
+            findings.append({"text": line, "severity": sev, "confidence": confidence, "source": "compliance", "rule": "Content flag"})
             i += 1
             continue
 
@@ -88,8 +94,13 @@ def _estimate_confidence(severity, description=""):
 
 
 def parse_rights_from_report(report):
-    """Extract rights/clearance items from the compliance report."""
-    rights = []
+    """Extract rights/clearance items from the compliance report.
+    Returns TWO things:
+    1. rights_entries — for the Rights Tracker tab (asset/type/expiry format)
+    2. rights_findings — in the same finding dict format as parse_findings (text/severity/confidence/source)
+    """
+    rights_entries = []
+    rights_findings = []
     in_rights_section = False
     lines = report.split("\n")
     today = date.today()
@@ -103,6 +114,7 @@ def parse_rights_from_report(report):
             break
         if in_rights_section and stripped.startswith("["):
             ts_match = re.search(r'\[[\d:]+(?:-[\d:]+)?\]', stripped)
+            ts_str = ts_match.group(0) if ts_match else ""
             rest = re.sub(r'\[[\d:]+(?:-[\d:]+)?\]\s*', '', stripped)
 
             # determine type
@@ -120,18 +132,30 @@ def parse_rights_from_report(report):
                 asset_type = "Archive footage"
 
             needs_clearance = "YES" in rest.upper() or "MAYBE" in rest.upper()
+            severity = "MAJOR" if needs_clearance else "MINOR"
 
-            rights.append({
+            # rights entry (for Rights Tracker tab)
+            rights_entries.append({
                 "asset": rest[:80],
                 "type": asset_type,
                 "expiry_date": (today + timedelta(days=30)).isoformat(),
-                "notes": f"Auto-detected from video analysis. {'Clearance needed.' if needs_clearance else 'Review recommended.'}",
+                "notes": f"Auto-detected. {'Clearance needed.' if needs_clearance else 'Review recommended.'}",
                 "added_at": datetime.now().isoformat(),
                 "auto_detected": True,
             })
 
-    log.info(f"Extracted {len(rights)} rights/clearance items from report")
-    return rights
+            # unified finding (same format as compliance findings)
+            rights_findings.append({
+                "text": f"{ts_str} {rest}".strip(),
+                "severity": severity,
+                "confidence": 75 if needs_clearance else 60,
+                "source": "rights",
+                "asset_type": asset_type,
+                "rule": f"{asset_type} — {'clearance required' if needs_clearance else 'review recommended'}",
+            })
+
+    log.info(f"Extracted {len(rights_entries)} rights entries, {len(rights_findings)} rights findings")
+    return rights_entries, rights_findings
 
 
 def severity_score(report):

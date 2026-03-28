@@ -136,15 +136,24 @@ def video_player(video_url: str, seek_to: float = 0, findings: list = None):
         for i, f in enumerate(findings):
             ts = parse_timestamp_seconds(f)
             sev = finding_severity(f)
-            color = "#dc2626" if sev == "CRITICAL" else "#ea580c" if sev == "MAJOR" else "#2563eb"
+            source = f.get("source", "compliance") if isinstance(f, dict) else "compliance"
+            if source == "rights":
+                color = "#7c3aed"  # purple for rights
+            elif sev == "CRITICAL":
+                color = "#dc2626"
+            elif sev == "MAJOR":
+                color = "#ea580c"
+            else:
+                color = "#2563eb"
             ft = finding_text(f)
             conf = finding_confidence(f)
             safe_label = html_mod.escape(ft[:50]).replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"').replace("\n", " ")
             markers_js += f'addMarker({ts}, "{color}", "{safe_label} ({conf}%)");'
 
     findings_data = json.dumps([
-        (parse_timestamp_seconds(f), html_mod.escape(finding_text(f)[:40]),
-         finding_severity(f).lower(), finding_confidence(f))
+        (parse_timestamp_seconds(f), html_mod.escape(finding_text(f)[:35]),
+         finding_severity(f).lower(), finding_confidence(f),
+         f.get("source", "compliance") if isinstance(f, dict) else "compliance")
         for f in (findings or [])
     ])
 
@@ -422,14 +431,22 @@ def video_player(video_url: str, seek_to: float = 0, findings: list = None):
         if (findings.length > 0) {{
             const msg = document.getElementById('no-findings-msg');
             if (msg) msg.remove();
-            findings.forEach(function(f) {{
+            findings.forEach(function(f, idx) {{
                 const btn = document.createElement('button');
                 btn.className = 'seek-badge ' + f[2];
+                btn.id = 'finding-' + idx;
                 const conf = f[3] || 70;
-                btn.innerHTML = '<span style="opacity:0.6;font-size:0.5rem">' + conf + '%</span> ' + fmt(f[0]) + '  ' + f[1].substring(0, 35) + (f[1].length > 35 ? '…' : '');
+                const src = f[4] || 'compliance';
+                const srcTag = src === 'rights'
+                    ? '<span style="color:#7c3aed;font-size:0.45rem;letter-spacing:0.05em;font-weight:700;">RIGHTS</span> '
+                    : '';
+                btn.innerHTML = srcTag + '<span style="opacity:0.6;font-size:0.5rem">' + conf + '%</span> ' + fmt(f[0]) + '  ' + f[1].substring(0, 30) + (f[1].length > 30 ? '…' : '');
                 btn.onclick = function() {{
                     video.currentTime = f[0];
                     video.play();
+                    // highlight active finding
+                    document.querySelectorAll('.seek-badge').forEach(function(b) {{ b.style.opacity = '0.5'; }});
+                    btn.style.opacity = '1';
                 }};
                 seekbar.appendChild(btn);
             }});
@@ -681,12 +698,15 @@ if run:
             log.info(f"Analysis complete in {_elapsed}s via {_analysis_backend}, response length: {len(report_data)} chars")
             _run_progress.progress(0.8)
 
-            # Step 3: parse findings
+            # Step 3: parse findings (compliance + rights → unified list)
             _run_status.caption("Parsing findings...")
-            findings = parse_findings(report_data)
-            log.info(f"Parsed {len(findings)} findings")
+            compliance_findings = parse_findings(report_data)
+            rights_entries_auto, rights_findings = parse_rights_from_report(report_data)
+            findings = compliance_findings + rights_findings
+            log.info(f"Parsed {len(compliance_findings)} compliance + {len(rights_findings)} rights = {len(findings)} total findings")
             for i, f in enumerate(findings):
-                log.info(f"  Finding {i+1}: {finding_text(f)[:100]}")
+                log.info(f"  Finding {i+1} [{f.get('source','?')}]: {finding_text(f)[:100]}")
+            st.session_state.rights_auto = rights_entries_auto
             _run_progress.progress(0.9)
 
             # Step 4: fetch video URL
@@ -814,6 +834,9 @@ with tab_findings:
                 conf = finding_confidence(finding)
                 ts_sec = parse_timestamp_seconds(finding)
                 safe_ft = html_mod.escape(ft)
+                source = finding.get("source", "compliance") if isinstance(finding, dict) else "compliance"
+                rule = finding.get("rule", "") if isinstance(finding, dict) else ""
+                asset_type = finding.get("asset_type", "") if isinstance(finding, dict) else ""
 
                 card_class = "finding-card"
                 if sev == "CRITICAL":
@@ -825,12 +848,26 @@ with tab_findings:
 
                 # confidence badge color
                 conf_color = "#dc2626" if conf >= 85 else "#ea580c" if conf >= 70 else "#d97706" if conf >= 50 else "#6b7280"
+                source_color = "#7c3aed" if source == "rights" else "var(--text-muted)"
+                source_label = asset_type if asset_type else ("Rights" if source == "rights" else "Compliance")
+
+                # format timecode
+                _tc_min = ts_sec // 60
+                _tc_sec = ts_sec % 60
+                _tc_str = f"{_tc_min}:{_tc_sec:02d}"
 
                 with st.container():
-                    # finding card with confidence badge
+                    # finding card: timecode | source tag | description | confidence
                     st.markdown(f'<div class="{card_class}">'
-                                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;">'
-                                f'<div style="flex:1">{safe_ft}</div>'
+                                f'<div style="display:flex;align-items:flex-start;gap:0.5rem;">'
+                                f'<span style="font-family:JetBrains Mono,monospace;font-size:0.72rem;font-weight:700;'
+                                f'color:var(--text-primary);min-width:36px;">{_tc_str}</span>'
+                                f'<span style="font-size:0.58rem;padding:2px 6px;border-radius:3px;font-weight:600;'
+                                f'letter-spacing:0.05em;text-transform:uppercase;border:1px solid {source_color};'
+                                f'color:{source_color};white-space:nowrap;">{html_mod.escape(source_label)}</span>'
+                                f'<div style="flex:1;font-size:0.8rem;">{safe_ft}'
+                                f'{("<br><span style=font-size:0.68rem;color:var(--text-muted);>Rule: " + html_mod.escape(rule) + "</span>") if rule else ""}'
+                                f'</div>'
                                 f'<div style="flex-shrink:0;background:{conf_color};color:#fff;padding:2px 8px;border-radius:4px;'
                                 f'font-size:0.65rem;font-weight:700;font-family:JetBrains Mono,monospace;">{conf}%</div>'
                                 f'</div></div>', unsafe_allow_html=True)
@@ -953,10 +990,8 @@ with tab_findings:
 
 # ── TAB 2: RIGHTS TRACKER ─────────────────────────────────
 with tab_rights:
-    # auto-detected rights from analysis
-    auto_rights = []
-    if "report" in st.session_state:
-        auto_rights = parse_rights_from_report(st.session_state.report)
+    # auto-detected rights from analysis (cached during run)
+    auto_rights = st.session_state.get("rights_auto", [])
 
     rights_entries = load_rights_log()
     all_rights = auto_rights + rights_entries
