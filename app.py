@@ -384,13 +384,36 @@ with st.sidebar:
     # ── 1. VIDEO ──
     _sidebar_label("1. Video")
     uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "webm"], label_visibility="collapsed")
+
     if uploaded_file:
-        st.caption(f"Uploaded: {uploaded_file.name}")
+        # upload to TwelveLabs if not already done for this file
+        upload_key = f"uploaded_{uploaded_file.name}_{uploaded_file.size}"
+        if upload_key not in st.session_state:
+            with st.spinner(f"Indexing {uploaded_file.name}..."):
+                try:
+                    import tempfile, os
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+                        tmp.write(uploaded_file.read())
+                        tmp_path = tmp.name
+                    task = client.tasks.create(
+                        index_id=DEMO_INDEX_ID,
+                        video_file=open(tmp_path, "rb"),
+                    )
+                    st.session_state[upload_key] = {"video_id": task.video_id, "label": uploaded_file.name}
+                    os.unlink(tmp_path)
+                    st.success(f"Indexed: {uploaded_file.name}")
+                except Exception as e:
+                    st.error(f"Upload failed: {e}")
+                    st.session_state[upload_key] = {"video_id": DEMO_VIDEO_ID, "label": DEMO_VIDEO_LABEL}
+
+        upload_info = st.session_state.get(upload_key, {})
+        selected_video_id = upload_info.get("video_id", DEMO_VIDEO_ID)
+        selected_video_label = upload_info.get("label", uploaded_file.name)
+        st.caption(f"Ready: {selected_video_label}")
     else:
         st.caption(f"Demo: {DEMO_VIDEO_LABEL}")
-
-    selected_video_id = DEMO_VIDEO_ID
-    selected_video_label = uploaded_file.name if uploaded_file else DEMO_VIDEO_LABEL
+        selected_video_id = DEMO_VIDEO_ID
+        selected_video_label = DEMO_VIDEO_LABEL
 
     # ── 2. TARGET PLATFORMS ──
     _sidebar_label("2. Target Platforms")
@@ -474,8 +497,10 @@ if run:
     else:
         _overlay_ph.markdown(LOADING_OVERLAY, unsafe_allow_html=True)
         prompt = build_prompt(ruleset_name, custom_rules, selected_platforms, selected_jurisdictions, selected_audio, include_rights)
+        _t0 = time.time()
         try:
             response = client.analyze(video_id=selected_video_id, prompt=prompt)
+            _elapsed = round(time.time() - _t0, 1)
             st.session_state.report = response.data
             st.session_state.findings = parse_findings(response.data)
             st.session_state.video_id = selected_video_id
@@ -485,6 +510,7 @@ if run:
             st.session_state.jurisdictions = selected_jurisdictions
             st.session_state.ruleset = ruleset_name
             st.session_state.run_time = datetime.now().isoformat()
+            st.session_state.analysis_duration = _elapsed
             st.session_state.seek_to = 0
         except Exception as e:
             st.error(f"Analysis failed: {e}")
@@ -515,7 +541,9 @@ with tab1:
             st.markdown(f'<div class="risk-medium">MEDIUM RISK &mdash; Score {score}</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="risk-low">LOW RISK &mdash; Score {score}</div>', unsafe_allow_html=True)
-        st.markdown(f"*{st.session_state.get('run_time','—')} · {st.session_state.get('ruleset','—')} · {st.session_state.get('video_label','')}*")
+        _dur = st.session_state.get('analysis_duration', '')
+        _dur_str = f" · {_dur}s" if _dur else ""
+        st.markdown(f"*{st.session_state.get('run_time','—')} · {st.session_state.get('ruleset','—')} · {st.session_state.get('video_label','')}{_dur_str}*")
         st.markdown("---")
         st.markdown(st.session_state.report)
 
@@ -553,15 +581,26 @@ with tab2:
 
                     if col_a.button("Approve", key=f"a_{i}"):
                         log_feedback(finding, "approved", st.session_state.video_id, st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
-                        st.success("Logged: approved")
+                        st.session_state[f"decision_{i}"] = "approved"
 
                     if col_r.button("Reject", key=f"r_{i}"):
                         log_feedback(finding, "rejected", st.session_state.video_id, st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
-                        st.error("Logged: rejected")
+                        st.session_state[f"decision_{i}"] = "rejected"
 
                     if col_e.button("Escalate", key=f"e_{i}"):
                         log_feedback(finding, "escalated", st.session_state.video_id, st.session_state.ruleset, st.session_state.platforms, st.session_state.jurisdictions)
-                        st.warning("Logged: escalated")
+                        st.session_state[f"decision_{i}"] = "escalated"
+
+                    # show decision status
+                    _decision = st.session_state.get(f"decision_{i}")
+                    if _decision:
+                        _colors = {"approved": "--risk-low-text", "rejected": "--risk-critical-text", "escalated": "--risk-medium-text"}
+                        st.markdown(f'<p style="font-size:0.7rem;color:var({_colors.get(_decision, "--text-muted")});font-weight:600;letter-spacing:0.05em;text-transform:uppercase;">{_decision}</p>', unsafe_allow_html=True)
+
+                    # annotation
+                    note = st.text_input("Add note", key=f"note_{i}", label_visibility="collapsed", placeholder="Add reviewer note...")
+                    if note:
+                        st.session_state[f"annotation_{i}"] = note
 
                     # LTX PANEL (always shown)
                     st.markdown('<div class="ltx-panel">', unsafe_allow_html=True)
