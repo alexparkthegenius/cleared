@@ -323,6 +323,10 @@ iframe { display: block !important; margin-bottom: 0 !important; }
 [data-testid="stCustomComponentV1"] > div { padding-bottom: 0 !important; }
 [data-baseweb="no-results"] { display: none !important; }
 ul[data-baseweb="menu"] li:only-child[aria-disabled="true"] { display: none !important; }
+ul[data-baseweb="menu"]:empty { display: none !important; }
+[data-baseweb="popover"] ul[data-baseweb="menu"]:has(li:only-child[aria-disabled="true"]) { display: none !important; }
+[data-baseweb="popover"]:has([data-baseweb="no-results"]) { display: none !important; }
+[data-baseweb="popover"]:has(ul[data-baseweb="menu"] li:only-child[aria-disabled="true"]) { display: none !important; }
 
 /* ── RISK BANNERS ── */
 .risk-critical { background: var(--risk-critical-bg); border: 1px solid var(--risk-critical-border); border-left: 4px solid var(--risk-critical-accent); border-radius: 6px; padding: 0.75rem 1.25rem; color: var(--risk-critical-text); font-size: 0.8rem; font-weight: 600; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; }

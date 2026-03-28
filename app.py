@@ -460,60 +460,114 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    # ── 1. VIDEO ──
+    # ── 1. VIDEO SOURCE ──
     _sidebar_label("1. Video")
-    uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "webm"], label_visibility="collapsed")
+    video_source = st.radio("Source", ["Upload", "TwelveLabs", "Iconik"],
+                            horizontal=True, label_visibility="collapsed")
 
-    if uploaded_file:
-        upload_key = f"uploaded_{uploaded_file.name}_{uploaded_file.size}"
-        if upload_key not in st.session_state:
-            try:
-                import tempfile
-                log.info(f"Upload started: {uploaded_file.name} ({uploaded_file.size} bytes)")
-                upload_index_id = get_or_create_index()
-                if not upload_index_id:
-                    raise Exception("Could not find or create an index. Check your API key.")
-                log.info(f"Using index {upload_index_id} for upload")
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-                    tmp.write(uploaded_file.read())
-                    tmp_path = tmp.name
-                task = client.tasks.create(
-                    index_id=upload_index_id,
-                    video_file=open(tmp_path, "rb"),
-                )
-                log.info(f"Upload task created: video_id={task.video_id}, task_id={task.id}")
-                os.unlink(tmp_path)
-                st.session_state[upload_key] = {
-                    "video_id": task.video_id,
-                    "task_id": task.id,
-                    "index_id": upload_index_id,
-                    "label": uploaded_file.name,
-                }
-            except Exception as e:
-                log.error(f"Upload failed: {e}\n{traceback.format_exc()}")
-                st.error(f"Upload failed: {e}")
+    selected_video_id = ""
+    selected_index_id = DEFAULT_INDEX_ID
+    selected_task_id = ""
+    selected_video_label = ""
 
-        upload_info = st.session_state.get(upload_key, {})
-        selected_video_id = upload_info.get("video_id", "")
-        selected_index_id = upload_info.get("index_id", DEFAULT_INDEX_ID)
-        selected_task_id = upload_info.get("task_id", "")
-        selected_video_label = upload_info.get("label", uploaded_file.name)
+    if video_source == "Upload":
+        uploaded_file = st.file_uploader("Upload video", type=["mp4", "mov", "avi", "webm"], label_visibility="collapsed")
+        if uploaded_file:
+            upload_key = f"uploaded_{uploaded_file.name}_{uploaded_file.size}"
+            if upload_key not in st.session_state:
+                try:
+                    import tempfile
+                    log.info(f"Upload started: {uploaded_file.name} ({uploaded_file.size} bytes)")
+                    upload_index_id = get_or_create_index()
+                    if not upload_index_id:
+                        raise Exception("Could not find or create an index. Check your API key.")
+                    log.info(f"Using index {upload_index_id} for upload")
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+                        tmp.write(uploaded_file.read())
+                        tmp_path = tmp.name
+                    task = client.tasks.create(
+                        index_id=upload_index_id,
+                        video_file=open(tmp_path, "rb"),
+                    )
+                    log.info(f"Upload task created: video_id={task.video_id}, task_id={task.id}")
+                    os.unlink(tmp_path)
+                    st.session_state[upload_key] = {
+                        "video_id": task.video_id,
+                        "task_id": task.id,
+                        "index_id": upload_index_id,
+                        "label": uploaded_file.name,
+                    }
+                except Exception as e:
+                    log.error(f"Upload failed: {e}\n{traceback.format_exc()}")
+                    st.error(f"Upload failed: {e}")
+
+            upload_info = st.session_state.get(upload_key, {})
+            selected_video_id = upload_info.get("video_id", "")
+            selected_index_id = upload_info.get("index_id", DEFAULT_INDEX_ID)
+            selected_task_id = upload_info.get("task_id", "")
+            selected_video_label = upload_info.get("label", uploaded_file.name)
+
+    elif video_source == "TwelveLabs":
+        # index picker
+        indexes = fetch_indexes()
+        if not indexes:
+            st.caption("No indexes found. Check your API key.")
+        else:
+            idx_names = [name for name, _ in indexes]
+            idx_map = {name: idx_id for name, idx_id in indexes}
+            chosen_idx = st.selectbox("Index", idx_names, label_visibility="collapsed")
+            if chosen_idx:
+                chosen_idx_id = idx_map[chosen_idx]
+                videos = fetch_videos(chosen_idx_id)
+                if videos:
+                    vid_names = [name for name, _ in videos]
+                    vid_map = {name: vid_id for name, vid_id in videos}
+                    chosen_vid = st.selectbox("Video", vid_names, label_visibility="collapsed")
+                    if chosen_vid:
+                        selected_video_id = vid_map[chosen_vid]
+                        selected_index_id = chosen_idx_id
+                        selected_task_id = ""
+                        selected_video_label = chosen_vid
+                else:
+                    st.caption("No videos in this index.")
+
+    elif video_source == "Iconik":
+        st.markdown('<p style="font-size:0.72rem;color:var(--text-muted);line-height:1.5;">'
+                    'Connect your Iconik MAM to pull assets directly.</p>', unsafe_allow_html=True)
+        iconik_url = st.text_input("Iconik Asset URL", placeholder="https://app.iconik.io/asset/...",
+                                    label_visibility="collapsed")
+        if iconik_url:
+            st.caption(f"Iconik asset linked: {iconik_url[:50]}...")
+            # store as reference — actual Iconik API integration would resolve to video
+            st.session_state["iconik_url"] = iconik_url
+            selected_video_label = f"Iconik: {iconik_url.split('/')[-1][:20]}"
+            st.info("Iconik integration: asset reference stored. Upload the video file to analyze.")
+
+    # show source status
+    if selected_video_label:
         st.caption(f"Source: {selected_video_label}")
-    else:
-        selected_video_id = ""
-        selected_index_id = DEFAULT_INDEX_ID
-        selected_task_id = ""
-        selected_video_label = ""
+    elif video_source == "Upload":
         st.caption("No video selected")
 
     # ── 2. TARGET PLATFORMS ──
     _sidebar_label("2. Target Platforms")
-    selected_platforms = st.multiselect("platforms", PLATFORMS, default=[], label_visibility="collapsed",
+    _plat_col1, _plat_col2 = st.columns([3, 1])
+    with _plat_col2:
+        if st.button("All", key="all_platforms", use_container_width=True):
+            st.session_state["_platforms_default"] = list(PLATFORMS)
+    _plat_default = st.session_state.get("_platforms_default", [])
+    selected_platforms = st.multiselect("platforms", PLATFORMS, default=_plat_default, label_visibility="collapsed",
                                         placeholder="Where will this air?")
 
     # ── 3. JURISDICTIONS ──
     _sidebar_label("3. Jurisdictions")
-    selected_jurisdictions = st.multiselect("jurisdictions", list(JURISDICTIONS.keys()), default=[], label_visibility="collapsed",
+    _jur_col1, _jur_col2 = st.columns([3, 1])
+    _jur_options = [k for k in JURISDICTIONS.keys() if k != "None"]
+    with _jur_col2:
+        if st.button("All", key="all_jurisdictions", use_container_width=True):
+            st.session_state["_jurisdictions_default"] = _jur_options
+    _jur_default = st.session_state.get("_jurisdictions_default", [])
+    selected_jurisdictions = st.multiselect("jurisdictions", _jur_options, default=_jur_default, label_visibility="collapsed",
                                             placeholder="Which regions?")
 
     # ── AUTO-RULESET: derive from platform + jurisdiction selection ──
