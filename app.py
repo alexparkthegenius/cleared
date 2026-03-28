@@ -5,7 +5,7 @@ import logging
 import traceback
 import html as html_mod
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
@@ -674,26 +674,42 @@ if run:
             _video_url = fetch_video_url(selected_video_id, selected_index_id)
             _run_progress.progress(1.0)
 
+            # compute risk score with breakdown
+            _risk_score = severity_score(report_data)
+            _n_critical = report_data.upper().count("CRITICAL")
+            _n_major = report_data.upper().count("MAJOR")
+            _n_minor = report_data.upper().count("MINOR")
+            _risk_parts = []
+            if _n_critical:
+                _risk_parts.append(f"{_n_critical} critical")
+            if _n_major:
+                _risk_parts.append(f"{_n_major} major")
+            if _n_minor:
+                _risk_parts.append(f"{_n_minor} minor")
+            _risk_explanation = ", ".join(_risk_parts) if _risk_parts else "no flags detected"
+
             st.session_state.report = report_data
             st.session_state.findings = findings
             st.session_state.video_id = selected_video_id
             st.session_state.index_id = selected_index_id
             st.session_state.video_label = selected_video_label
             st.session_state.video_url = _video_url
-            st.session_state.risk_score = severity_score(response.data)
+            st.session_state.risk_score = _risk_score
+            st.session_state.risk_explanation = _risk_explanation
             st.session_state.platforms = selected_platforms
             st.session_state.jurisdictions = selected_jurisdictions
             st.session_state.ruleset = ruleset_name
             st.session_state.run_time = datetime.now().isoformat()
             st.session_state.analysis_duration = _elapsed
             st.session_state.seek_to = 0
-            log.info(f"Risk score: {st.session_state.risk_score}")
+            log.info(f"Risk score: {_risk_score}/100 — {_risk_explanation}")
         except Exception as e:
             log.error(f"Analysis failed: {e}\n{traceback.format_exc()}")
             st.error(f"Analysis failed: {e}")
         finally:
             _run_status.empty()
             _run_progress.empty()
+        st.rerun()
 
 # ── THEATER PLAYER ────────────────────────────────────────────
 # Only shows AFTER analysis has run — video source selection is decoupled
@@ -736,16 +752,25 @@ with tab_findings:
                     '<b style="color:var(--text-secondary)">Run Compliance Check</b></div>',
                     unsafe_allow_html=True)
     else:
-        # risk banner
+        # risk banner with score/100 and explanation
         score = st.session_state.risk_score
+        _max_score = max(score, 100)
+        _risk_expl = st.session_state.get("risk_explanation", "")
         if score >= 20:
-            st.markdown(f'<div class="risk-critical">CRITICAL RISK &mdash; Score {score} &mdash; Immediate action required</div>', unsafe_allow_html=True)
+            _level = "CRITICAL"
+            _css = "risk-critical"
         elif score >= 15:
-            st.markdown(f'<div class="risk-high">HIGH RISK &mdash; Score {score}</div>', unsafe_allow_html=True)
+            _level = "HIGH"
+            _css = "risk-high"
         elif score >= 7:
-            st.markdown(f'<div class="risk-medium">MEDIUM RISK &mdash; Score {score}</div>', unsafe_allow_html=True)
+            _level = "MEDIUM"
+            _css = "risk-medium"
         else:
-            st.markdown(f'<div class="risk-low">LOW RISK &mdash; Score {score}</div>', unsafe_allow_html=True)
+            _level = "LOW"
+            _css = "risk-low"
+        st.markdown(f'<div class="{_css}">{_level} RISK &mdash; {score}/100'
+                    f'{" &mdash; " + html_mod.escape(_risk_expl) if _risk_expl else ""}</div>',
+                    unsafe_allow_html=True)
 
         _dur = st.session_state.get('analysis_duration', '')
         _dur_str = f" &middot; {_dur}s" if _dur else ""
@@ -979,7 +1004,47 @@ with tab_rights:
                         f'{("  ·  " + e.get("notes","")) if e.get("notes") else ""}</div>',
                         unsafe_allow_html=True)
     elif not auto_rights:
-        st.caption("No rights entries yet. Run a compliance check to auto-detect, or add manually.")
+        # pre-populated template entries so users see the structure
+        _template_rights = [
+            {"asset": "Background music — Untitled Track", "type": "Music license", "expiry_date": (date.today() + timedelta(days=45)).isoformat(), "notes": "Pending license verification", "template": True},
+            {"asset": "Talent — Lead presenter", "type": "Talent release", "expiry_date": (date.today() + timedelta(days=90)).isoformat(), "notes": "Release on file, US territory only", "template": True},
+            {"asset": "Brand logo — Partner Co.", "type": "Brand license", "expiry_date": (date.today() + timedelta(days=15)).isoformat(), "notes": "Approval needed for broadcast use", "template": True},
+            {"asset": "Stock footage — Aerial cityscape", "type": "Archive footage", "expiry_date": (date.today() + timedelta(days=365)).isoformat(), "notes": "Getty Images, royalty-free", "template": True},
+        ]
+        st.markdown('<p style="font-size:0.62rem;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;'
+                    'font-weight:600;margin-top:0.5rem;margin-bottom:0.5rem;">Template entries (example)</p>', unsafe_allow_html=True)
+        for e in _template_rights:
+            try:
+                days = (date.fromisoformat(e["expiry_date"]) - date.today()).days
+                if days <= 7:
+                    css, indicator, color = "rights-expiring", f"Expires in {days} days", "#ea580c"
+                elif days <= 30:
+                    css, indicator, color = "rights-expiring", f"{days} days remaining", "#d97706"
+                else:
+                    css, indicator, color = "rights-ok", f"{days} days remaining", "#888"
+            except Exception:
+                css, indicator, color = "rights-ok", "—", "#888"
+            st.markdown(f'<div class="{css}" style="border-color:{color};color:{color};opacity:0.7;">'
+                        f'<b>{e["asset"]}</b> · {e["type"]} · {e["expiry_date"]} · {indicator}'
+                        f'{"  ·  " + e["notes"] if e.get("notes") else ""}</div>',
+                        unsafe_allow_html=True)
+
+    # export button
+    st.markdown("---")
+    _export_entries = auto_rights + rights_entries
+    if _export_entries:
+        _rights_df = pd.DataFrame([
+            {"Asset": e.get("asset",""), "Type": e.get("type",""), "Expiry": e.get("expiry_date",""),
+             "Notes": e.get("notes",""), "Source": "Auto-detected" if e.get("auto_detected") else "Manual"}
+            for e in _export_entries
+        ])
+        col_csv_r, col_json_r = st.columns(2)
+        with col_csv_r:
+            st.download_button("Export Rights CSV", _rights_df.to_csv(index=False),
+                               "cleared_rights.csv", "text/csv", use_container_width=True)
+        with col_json_r:
+            st.download_button("Export Rights JSON", json.dumps(_export_entries, indent=2, default=str),
+                               "cleared_rights.json", "application/json", use_container_width=True)
 
 # ── TAB 3: EXPORT ─────────────────────────────────────────
 with tab_export:
