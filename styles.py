@@ -99,46 +99,48 @@ def get_app_css():
    COMPONENTS
    ══════════════════════════════════════════════════════ */
 
-/* ── BASE ── */
-html, body, [class*="css"] {
-    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+/* ── BASE — force font everywhere ── */
+html, body, [class*="css"], [class*="st-"],
+.stApp, .stApp *, .stApp p, .stApp span, .stApp div, .stApp label, .stApp input,
+.stApp textarea, .stApp select, .stApp button, .stApp a,
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stApp [data-baseweb], .stApp [data-testid],
+section[data-testid="stSidebar"], section[data-testid="stSidebar"] * {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace !important;
 }
 .stApp {
     background-color: var(--bg-primary) !important;
     color: var(--text-primary) !important;
-    transition: background-color 0.2s, color 0.2s;
+    transition: background-color 0.2s, color 0.2s !important;
 }
 
 /* ── TYPOGRAPHY ── */
-h1 {
-    font-family: 'JetBrains Mono', monospace !important;
+.stApp h1 {
     font-weight: 700 !important;
     color: var(--text-primary) !important;
     font-size: 1.6rem !important;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.02em !important;
     margin-bottom: 0 !important;
 }
-h2 {
-    font-family: 'JetBrains Mono', monospace !important;
+.stApp h2 {
     color: var(--text-primary) !important;
     font-size: 0.78rem !important;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
     font-weight: 600 !important;
 }
-h3 {
-    font-family: 'JetBrains Mono', monospace !important;
+.stApp h3 {
     color: var(--text-secondary) !important;
     font-size: 0.7rem !important;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
     font-weight: 600 !important;
 }
 
 /* ── TEXT ── */
-.stMarkdown p { color: var(--text-secondary) !important; font-size: 0.85rem; line-height: 1.7; }
-.stCaption, .stCaption p { color: var(--text-muted) !important; font-size: 0.72rem !important; }
-hr { border-color: var(--border-light) !important; margin: 1rem 0 !important; }
+.stApp .stMarkdown p { color: var(--text-secondary) !important; font-size: 0.85rem !important; line-height: 1.7 !important; }
+.stApp .stCaption, .stApp .stCaption p { color: var(--text-muted) !important; font-size: 0.72rem !important; }
+.stApp hr { border-color: var(--border-light) !important; margin: 1rem 0 !important; }
 
 /* ── SIDEBAR ── */
 section[data-testid="stSidebar"] {
@@ -164,116 +166,161 @@ section[data-testid="stSidebar"] .stCaption p {
 }
 
 /* ── INPUTS ── */
-.stTextInput input, .stTextArea textarea {
+.stApp .stTextInput input, .stApp .stTextArea textarea,
+.stApp [data-testid="stTextInput"] input, .stApp [data-testid="stTextArea"] textarea {
     background: var(--bg-input) !important;
     border: 1px solid var(--border) !important;
     color: var(--text-primary) !important;
     border-radius: 6px !important;
-    font-family: 'JetBrains Mono', monospace !important;
     font-size: 0.82rem !important;
 }
-.stTextInput input:focus, .stTextArea textarea:focus {
+.stApp .stTextInput input:focus, .stApp .stTextArea textarea:focus {
     border-color: var(--text-tertiary) !important;
     box-shadow: 0 0 0 2px rgba(107,114,128,0.15) !important;
 }
+.stApp .stTextInput input::placeholder, .stApp .stTextArea textarea::placeholder {
+    color: var(--text-muted) !important;
+}
 
 /* ── SELECTS ── */
-.stSelectbox [data-baseweb="select"] > div,
-.stMultiSelect [data-baseweb="select"] > div {
+.stApp .stSelectbox [data-baseweb="select"] > div,
+.stApp .stMultiSelect [data-baseweb="select"] > div {
     background: var(--bg-input) !important;
     border: 1px solid var(--border) !important;
     border-radius: 6px !important;
     color: var(--text-primary) !important;
 }
-.stSelectbox [data-baseweb="select"] span,
-.stMultiSelect [data-baseweb="select"] span {
+.stApp .stSelectbox [data-baseweb="select"] span,
+.stApp .stMultiSelect [data-baseweb="select"] span,
+.stApp .stSelectbox [data-baseweb="select"] [data-baseweb="select-value"] *,
+.stApp .stMultiSelect [data-baseweb="select"] [data-baseweb="select-value"] * {
     color: var(--text-primary) !important;
 }
-.stSelectbox svg, .stMultiSelect svg {
+.stApp .stSelectbox svg, .stApp .stMultiSelect svg {
     fill: var(--text-tertiary) !important;
 }
-[data-baseweb="popover"] {
+.stApp [data-baseweb="popover"] {
     border: 1px solid var(--border) !important;
     border-radius: 6px !important;
     box-shadow: var(--shadow-md) !important;
 }
-[data-baseweb="menu"] { background: var(--bg-secondary) !important; }
-[data-baseweb="menu"] li, [role="option"] {
+.stApp [data-baseweb="menu"] { background: var(--bg-secondary) !important; }
+.stApp [data-baseweb="menu"] li, .stApp [role="option"] {
     color: var(--text-primary) !important;
     background: var(--bg-secondary) !important;
     font-size: 0.82rem !important;
 }
-[role="option"]:hover, [data-baseweb="menu"] li:hover,
-[role="option"][aria-selected="true"] {
+.stApp [role="option"]:hover, .stApp [data-baseweb="menu"] li:hover,
+.stApp [role="option"][aria-selected="true"] {
     background: var(--bg-tertiary) !important;
 }
 
 /* ── MULTISELECT TAGS ── */
-.stMultiSelect span[data-baseweb="tag"] {
+.stApp .stMultiSelect span[data-baseweb="tag"] {
     background: var(--tag-1-bg) !important;
     border: 1px solid var(--tag-1-border) !important;
     border-radius: 4px !important;
     color: var(--tag-1-text) !important;
-    font-family: 'JetBrains Mono', monospace !important;
     font-size: 0.68rem !important;
     font-weight: 500 !important;
 }
-.stMultiSelect span[data-baseweb="tag"]:nth-child(3n+2) {
+.stApp .stMultiSelect span[data-baseweb="tag"]:nth-child(3n+2) {
     background: var(--tag-2-bg) !important;
     border-color: var(--tag-2-border) !important;
     color: var(--tag-2-text) !important;
 }
-.stMultiSelect span[data-baseweb="tag"]:nth-child(3n+3) {
+.stApp .stMultiSelect span[data-baseweb="tag"]:nth-child(3n+3) {
     background: var(--tag-3-bg) !important;
     border-color: var(--tag-3-border) !important;
     color: var(--tag-3-text) !important;
 }
-.stMultiSelect span[data-baseweb="tag"] span[role="presentation"] { color: inherit !important; }
-.stMultiSelect [data-baseweb="clear-icon"] { color: var(--text-muted) !important; }
+.stApp .stMultiSelect span[data-baseweb="tag"] span[role="presentation"] { color: inherit !important; }
+.stApp .stMultiSelect span[data-baseweb="tag"] span { color: inherit !important; }
+.stApp .stMultiSelect [data-baseweb="clear-icon"] { color: var(--text-muted) !important; }
 
 /* ── CHECKBOX ── */
-.stCheckbox label { color: var(--text-secondary) !important; font-size: 0.8rem !important; font-weight: 500 !important; }
+.stApp .stCheckbox label,
+.stApp .stCheckbox label span { color: var(--text-secondary) !important; font-size: 0.8rem !important; font-weight: 500 !important; }
+
+/* ── RADIO ── */
+.stApp .stRadio label,
+.stApp .stRadio label span,
+.stApp [data-testid="stRadio"] label span { color: var(--text-secondary) !important; }
+
+/* ── FILE UPLOADER ── */
+.stApp .stFileUploader,
+.stApp [data-testid="stFileUploader"] {
+    background: var(--bg-secondary) !important;
+    border: 1px dashed var(--border) !important;
+    border-radius: 6px !important;
+}
+.stApp .stFileUploader label,
+.stApp .stFileUploader p,
+.stApp .stFileUploader span,
+.stApp [data-testid="stFileUploader"] * {
+    color: var(--text-secondary) !important;
+}
+
+/* ── EXPANDER ── */
+.stApp .stExpander,
+.stApp [data-testid="stExpander"] {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: 6px !important;
+}
+.stApp .stExpander summary,
+.stApp .stExpander summary span,
+.stApp [data-testid="stExpander"] summary span {
+    color: var(--text-secondary) !important;
+}
+
+/* ── DATE INPUT ── */
+.stApp .stDateInput input,
+.stApp [data-testid="stDateInput"] input {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-primary) !important;
+    border-radius: 6px !important;
+}
 
 /* ── BUTTONS ── */
-.stButton > button {
+.stApp .stButton > button {
     background: var(--bg-secondary) !important;
     color: var(--text-secondary) !important;
     border: 1px solid var(--border) !important;
     border-radius: 6px !important;
-    font-family: 'JetBrains Mono', monospace !important;
     font-weight: 600 !important;
     font-size: 0.75rem !important;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.02em !important;
     transition: all 0.15s ease !important;
 }
-.stButton > button:hover {
+.stApp .stButton > button:hover {
     background: var(--bg-hover) !important;
     border-color: var(--text-muted) !important;
     box-shadow: var(--shadow-sm) !important;
 }
-.stButton > button[kind="primary"],
-section[data-testid="stSidebar"] .stButton > button {
+.stApp .stButton > button[kind="primary"],
+.stApp section[data-testid="stSidebar"] .stButton > button {
     background: var(--bg-btn-primary) !important;
     color: var(--text-on-primary) !important;
     border-color: var(--bg-btn-primary) !important;
 }
-section[data-testid="stSidebar"] .stButton > button:hover {
+.stApp section[data-testid="stSidebar"] .stButton > button:hover {
     background: var(--bg-btn-primary-hover) !important;
     box-shadow: var(--shadow-md) !important;
 }
-.stDownloadButton > button {
+.stApp .stDownloadButton > button {
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border) !important;
     color: var(--text-secondary) !important;
-    font-family: 'JetBrains Mono', monospace !important;
     font-size: 0.72rem !important;
     font-weight: 500 !important;
     border-radius: 6px !important;
 }
-.stDownloadButton > button:hover { border-color: var(--text-tertiary) !important; color: var(--text-primary) !important; }
+.stApp .stDownloadButton > button:hover { border-color: var(--text-tertiary) !important; color: var(--text-primary) !important; }
 
 /* ── TABS ── */
-.stTabs [data-baseweb="tab-list"] {
+.stApp .stTabs [data-baseweb="tab-list"] {
     position: sticky !important;
     top: 44px !important;
     z-index: 998 !important;
@@ -281,29 +328,39 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     border-bottom: 1px solid var(--border-light) !important;
     gap: 0 !important;
 }
-.stTabs [data-baseweb="tab"] {
+.stApp .stTabs [data-baseweb="tab"] {
     background: transparent !important;
     color: var(--text-muted) !important;
-    font-family: 'JetBrains Mono', monospace !important;
     font-size: 0.65rem !important;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
     font-weight: 500 !important;
     border-bottom: 2px solid transparent !important;
     padding: 0.6rem 1rem !important;
 }
-.stTabs [data-baseweb="tab"]:hover { color: var(--text-secondary) !important; }
-.stTabs [aria-selected="true"] {
+.stApp .stTabs [data-baseweb="tab"]:hover { color: var(--text-secondary) !important; }
+.stApp .stTabs [aria-selected="true"] {
     color: var(--text-primary) !important;
     border-bottom: 2px solid var(--accent) !important;
     font-weight: 700 !important;
 }
+/* override Streamlit's tab highlight bar */
+.stApp .stTabs [data-baseweb="tab-highlight"] {
+    background-color: var(--accent) !important;
+}
+.stApp .stTabs [data-baseweb="tab-border"] {
+    background-color: var(--border-light) !important;
+}
 
 /* ── ALERTS ── */
-.stSuccess > div { background: var(--success-bg) !important; border: 1px solid var(--success-border) !important; border-radius: 6px !important; color: var(--success-text) !important; }
-.stError > div { background: var(--error-bg) !important; border: 1px solid var(--error-border) !important; border-radius: 6px !important; color: var(--error-text) !important; }
-.stWarning > div { background: var(--warn-bg) !important; border: 1px solid var(--warn-border) !important; border-radius: 6px !important; color: var(--warn-text) !important; }
-.stInfo > div { background: var(--info-bg) !important; border: 1px solid var(--info-border) !important; border-radius: 6px !important; color: var(--info-text) !important; }
+.stApp .stSuccess > div { background: var(--success-bg) !important; border: 1px solid var(--success-border) !important; border-radius: 6px !important; color: var(--success-text) !important; }
+.stApp .stSuccess > div p { color: var(--success-text) !important; }
+.stApp .stError > div { background: var(--error-bg) !important; border: 1px solid var(--error-border) !important; border-radius: 6px !important; color: var(--error-text) !important; }
+.stApp .stError > div p { color: var(--error-text) !important; }
+.stApp .stWarning > div { background: var(--warn-bg) !important; border: 1px solid var(--warn-border) !important; border-radius: 6px !important; color: var(--warn-text) !important; }
+.stApp .stWarning > div p { color: var(--warn-text) !important; }
+.stApp .stInfo > div { background: var(--info-bg) !important; border: 1px solid var(--info-border) !important; border-radius: 6px !important; color: var(--info-text) !important; }
+.stApp .stInfo > div p { color: var(--info-text) !important; }
 
 /* ── SPINNER ── */
 .stSpinner > div {
@@ -317,15 +374,22 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 @keyframes cleared-spin { to { transform: rotate(360deg); } }
 
 /* ── LAYOUT ── */
-[data-testid="stCustomComponentV1"] {
+.stApp [data-testid="stCustomComponentV1"] {
     margin-bottom: -2rem !important; padding-bottom: 0 !important; line-height: 0 !important;
 }
-iframe { display: block !important; margin-bottom: 0 !important; }
-.stTabs { margin-top: 0 !important; }
-[data-testid="stCustomComponentV1"] > div { padding-bottom: 0 !important; }
+.stApp iframe { display: block !important; margin-bottom: 0 !important; }
+.stApp .stTabs { margin-top: 0 !important; }
+.stApp [data-testid="stCustomComponentV1"] > div { padding-bottom: 0 !important; }
 
 /* ── SCROLLABLE TABS CONTAINER ── */
-section.main > div.block-container { padding-top: 0 !important; max-width: 100% !important; }
+.stApp section.main > div.block-container { padding-top: 0 !important; max-width: 100% !important; }
+
+/* ── PROGRESS BAR ── */
+.stApp .stProgress > div > div { background: var(--bg-tertiary) !important; border-radius: 4px !important; }
+.stApp .stProgress > div > div > div { background: var(--accent) !important; border-radius: 4px !important; }
+
+/* ── TOOLTIPS ── */
+.stApp [data-baseweb="tooltip"] { background: var(--bg-secondary) !important; color: var(--text-primary) !important; border: 1px solid var(--border) !important; }
 .scrollable-findings {
     max-height: calc(100vh - 560px);
     overflow-y: auto;
@@ -337,35 +401,35 @@ section.main > div.block-container { padding-top: 0 !important; max-width: 100% 
 .scrollable-findings::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ── FINDING ACTION BUTTONS ── */
-.finding-actions {
+.stApp .finding-actions {
     display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; margin-bottom: 0.25rem;
 }
-.finding-actions .stButton > button {
+.stApp .finding-actions .stButton > button {
     padding: 0.25rem 0.65rem !important; font-size: 0.62rem !important;
     min-height: unset !important; height: auto !important;
-    letter-spacing: 0.04em; border-radius: 4px !important;
+    letter-spacing: 0.04em !important; border-radius: 4px !important;
 }
-.btn-seek .stButton > button {
+.stApp .btn-seek .stButton > button {
     background: var(--bg-tertiary) !important; color: var(--text-primary) !important;
     border: 1px solid var(--border) !important; font-weight: 700 !important;
 }
-.btn-approve .stButton > button {
+.stApp .btn-approve .stButton > button {
     background: var(--risk-low-bg) !important; color: var(--risk-low-text) !important;
     border: 1px solid var(--risk-low-border) !important;
 }
-.btn-reject .stButton > button {
+.stApp .btn-reject .stButton > button {
     background: var(--risk-critical-bg) !important; color: var(--risk-critical-text) !important;
     border: 1px solid var(--risk-critical-border) !important;
 }
-.btn-escalate .stButton > button {
+.stApp .btn-escalate .stButton > button {
     background: var(--risk-medium-bg) !important; color: var(--risk-medium-text) !important;
     border: 1px solid var(--risk-medium-border) !important;
 }
-.btn-blur .stButton > button, .btn-bleep .stButton > button {
+.stApp .btn-blur .stButton > button, .stApp .btn-bleep .stButton > button {
     background: var(--info-bg) !important; color: var(--info-text) !important;
     border: 1px solid var(--info-border) !important;
 }
-.btn-ai .stButton > button {
+.stApp .btn-ai .stButton > button {
     background: var(--ltx-bg) !important; color: #7c3aed !important;
     border: 1px solid var(--ltx-border) !important;
 }
