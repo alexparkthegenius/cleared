@@ -57,36 +57,16 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
-# ── Request logging middleware ────────────────────────────────
-from starlette.middleware.base import BaseHTTPMiddleware
+# ── Request logging (non-middleware approach to avoid CORS interference) ───
 from starlette.requests import Request
 import traceback
-
-
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        t0 = time.time()
-        method = request.method
-        path = request.url.path
-        log.info(f"→ {method} {path}")
-        try:
-            response = await call_next(request)
-            elapsed = round((time.time() - t0) * 1000)
-            log.info(f"← {method} {path} → {response.status_code} ({elapsed}ms)")
-            return response
-        except Exception:
-            elapsed = round((time.time() - t0) * 1000)
-            log.exception(f"✕ {method} {path} → UNHANDLED ERROR ({elapsed}ms)")
-            raise
-
-
-app.add_middleware(RequestLoggingMiddleware)
 
 
 # ── Global exception handler ──────────────────────────────────
