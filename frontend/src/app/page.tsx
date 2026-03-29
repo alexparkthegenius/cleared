@@ -184,9 +184,12 @@ export default function Home() {
 
         // Map API findings to frontend Finding type
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const mappedFindings: Finding[] = ((result as any).findings || []).map((f: any, i: number) => ({
+        const mappedFindings: Finding[] = ((result as any).findings || []).map((f: any, i: number) => {
+          const tc = Number(f.timecode ?? f.timestamp_seconds ?? 0);
+          if (i < 5) console.log(`Finding ${i} timecode mapping: timecode=${f.timecode}, timestamp_seconds=${f.timestamp_seconds}, resolved=${tc}`);
+          return {
           id: `f${i}`,
-          timecode: Number(f.timecode ?? f.timestamp_seconds ?? 0) || 0,
+          timecode: isNaN(tc) ? 0 : tc,
           text: ((f.text as string) || (f.description as string) || "").replace(/\s*—\s*Severity:\s*\w+\s*—\s*Confidence:\s*\d+/gi, ""),
           severity: ((f.severity as string) || "MINOR").toUpperCase() as Finding["severity"],
           confidence: (f.confidence as number) || 50,
@@ -194,7 +197,7 @@ export default function Home() {
           source: (f.source as string) || "compliance",
           decision: "pending" as Decision,
           remediation: "none" as Remediation,
-        }));
+        }});
 
         setFindings(mappedFindings);
         setRiskScore(result.risk_score || 0);
