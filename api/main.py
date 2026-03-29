@@ -596,11 +596,22 @@ async def regen_clip(req: RegenRequest):
 
     log.info(f"Regen request: finding={req.finding_id}, mode={req.mode}, start={req.start_time}, dur={req.duration}")
 
+    # Convert S3 URI to presigned HTTPS URL for LTX
+    video_url = req.video_uri
+    if video_url.startswith("s3://"):
+        log.info(f"Converting S3 URI to presigned URL: {video_url[:60]}")
+        presigned = get_s3_presigned_url(video_url)
+        if not presigned:
+            log.error(f"Failed to generate presigned URL for regen: {video_url[:60]}")
+            raise HTTPException(status_code=500, detail="Failed to generate presigned URL for source video")
+        video_url = presigned
+        log.info(f"Presigned URL generated: {video_url[:80]}...")
+
     options: list[RegenOption] = []
 
     # Option 1 — original prompt
     try:
-        mp4_1 = await _call_ltx_retake(req.video_uri, req.prompt, req.start_time, req.duration, req.mode)
+        mp4_1 = await _call_ltx_retake(video_url, req.prompt, req.start_time, req.duration, req.mode)
         url_1 = _upload_regen_clip(mp4_1, req.finding_id)
         options.append(RegenOption(
             id=f"{req.finding_id}_opt1",
@@ -617,7 +628,7 @@ async def regen_clip(req: RegenRequest):
     # Option 2 — alternative angle
     try:
         alt_prompt = f"{req.prompt}, alternative angle"
-        mp4_2 = await _call_ltx_retake(req.video_uri, alt_prompt, req.start_time, req.duration, req.mode)
+        mp4_2 = await _call_ltx_retake(video_url, alt_prompt, req.start_time, req.duration, req.mode)
         url_2 = _upload_regen_clip(mp4_2, req.finding_id)
         options.append(RegenOption(
             id=f"{req.finding_id}_opt2",

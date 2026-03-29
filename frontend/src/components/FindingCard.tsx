@@ -130,11 +130,11 @@ export default function FindingCard({
       });
       setRegenOptions(result.options);
     } catch (err) {
-      console.error("Regen failed:", err);
-      // Show placeholder options on error so the UI is still functional
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("Regen failed:", errMsg);
+      // Show error state with placeholder options
       setRegenOptions([
-        { id: `${finding.id}_opt1`, video_url: "", prompt, duration: 3 },
-        { id: `${finding.id}_opt2`, video_url: "", prompt: `${prompt}, alternative angle`, duration: 3 },
+        { id: `${finding.id}_err`, video_url: "", prompt: `Generation failed: ${errMsg}`, duration: 3 },
       ]);
     } finally {
       setRegenLoading(false);
