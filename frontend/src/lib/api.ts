@@ -98,6 +98,44 @@ export async function regenClip(params: {
   return res.json();
 }
 
+// ── TwelveLabs Index / Video Picker ──────────────────────────
+
+export async function getTwelveLabsIndexes(): Promise<
+  { id: string; name: string; video_count: number }[]
+> {
+  const res = await fetch(`${BASE_URL}/api/twelvelabs/indexes`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch indexes (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function getTwelveLabsVideos(
+  indexId: string
+): Promise<{ id: string; name: string; duration: number }[]> {
+  const res = await fetch(`${BASE_URL}/api/twelvelabs/indexes/${indexId}/videos`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch videos (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function getTwelveLabsVideoUrl(
+  indexId: string,
+  videoId: string
+): Promise<{ hls_url: string; thumbnail_url?: string }> {
+  const res = await fetch(
+    `${BASE_URL}/api/twelvelabs/videos/${indexId}/${videoId}/url`
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch video URL (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
 export async function regenTextToVideo(params: {
   prompt: string;
   duration: number;

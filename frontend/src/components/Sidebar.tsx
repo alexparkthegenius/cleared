@@ -1,7 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { VideoSource, Platform, Jurisdiction } from "@/types";
+import {
+  getTwelveLabsIndexes,
+  getTwelveLabsVideos,
+  getTwelveLabsVideoUrl,
+} from "@/lib/api";
 
 const PLATFORMS: Platform[] = [
   "YouTube",
@@ -26,6 +31,7 @@ interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
   onFileSelect: (file: File) => void;
+  onTwelveLabsVideoSelect: (hlsUrl: string, indexId: string, videoId: string) => void;
   onRunCheck: (config: {
     source: VideoSource;
     platforms: Platform[];
@@ -41,6 +47,7 @@ export default function Sidebar({
   collapsed,
   onToggle,
   onFileSelect,
+  onTwelveLabsVideoSelect,
   onRunCheck,
   isAnalyzing,
   theme,
@@ -53,6 +60,58 @@ export default function Sidebar({
   const [showCustomRules, setShowCustomRules] = useState(false);
   const [quickRule, setQuickRule] = useState("");
   const [dragOver, setDragOver] = useState(false);
+
+  // TwelveLabs picker state
+  const [tlIndexes, setTlIndexes] = useState<{ id: string; name: string; video_count: number }[]>([]);
+  const [tlVideos, setTlVideos] = useState<{ id: string; name: string; duration: number }[]>([]);
+  const [tlSelectedIndex, setTlSelectedIndex] = useState("");
+  const [tlSelectedVideo, setTlSelectedVideo] = useState("");
+  const [tlLoadingIndexes, setTlLoadingIndexes] = useState(false);
+  const [tlLoadingVideos, setTlLoadingVideos] = useState(false);
+  const [tlLoadingUrl, setTlLoadingUrl] = useState(false);
+  const [tlError, setTlError] = useState<string | null>(null);
+
+  // Fetch indexes when TwelveLabs source is selected
+  useEffect(() => {
+    if (source !== "twelvelabs") return;
+    if (tlIndexes.length > 0) return; // already loaded
+    setTlLoadingIndexes(true);
+    setTlError(null);
+    getTwelveLabsIndexes()
+      .then((data) => setTlIndexes(data))
+      .catch((err) => setTlError(err.message))
+      .finally(() => setTlLoadingIndexes(false));
+  }, [source, tlIndexes.length]);
+
+  // Fetch videos when an index is selected
+  useEffect(() => {
+    if (!tlSelectedIndex) { setTlVideos([]); return; }
+    setTlLoadingVideos(true);
+    setTlError(null);
+    setTlSelectedVideo("");
+    getTwelveLabsVideos(tlSelectedIndex)
+      .then((data) => setTlVideos(data))
+      .catch((err) => setTlError(err.message))
+      .finally(() => setTlLoadingVideos(false));
+  }, [tlSelectedIndex]);
+
+  // Fetch video URL when a video is selected
+  useEffect(() => {
+    if (!tlSelectedIndex || !tlSelectedVideo) return;
+    setTlLoadingUrl(true);
+    setTlError(null);
+    getTwelveLabsVideoUrl(tlSelectedIndex, tlSelectedVideo)
+      .then((data) => {
+        if (data.hls_url) {
+          onTwelveLabsVideoSelect(data.hls_url, tlSelectedIndex, tlSelectedVideo);
+        } else {
+          setTlError("No playback URL available for this video");
+        }
+      })
+      .catch((err) => setTlError(err.message))
+      .finally(() => setTlLoadingUrl(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tlSelectedIndex, tlSelectedVideo]);
 
   const togglePlatform = (p: Platform) => {
     setPlatforms((prev) =>
@@ -240,22 +299,84 @@ export default function Sidebar({
           </section>
         )}
 
-        {/* TwelveLabs dropdown */}
+        {/* TwelveLabs picker */}
         {source === "twelvelabs" && (
-          <section>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
-              Select Index or Video
-            </label>
-            <select
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
-              defaultValue=""
-            >
-              <option value="" disabled>Select an index or video...</option>
-              <option value="idx-001">Index: Brand Safety Q1</option>
-              <option value="idx-002">Index: Campaign Review 2026</option>
-              <option value="vid-001">Video: Product Launch v3</option>
-              <option value="vid-002">Video: TV Spot 30s</option>
-            </select>
+          <section className="space-y-3">
+            {/* Index dropdown */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+                Select Index
+              </label>
+              {tlLoadingIndexes ? (
+                <div className="flex items-center gap-2 text-xs text-muted py-2">
+                  <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Loading indexes...
+                </div>
+              ) : (
+                <select
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+                  value={tlSelectedIndex}
+                  onChange={(e) => setTlSelectedIndex(e.target.value)}
+                >
+                  <option value="">Select an index...</option>
+                  {tlIndexes.map((idx) => (
+                    <option key={idx.id} value={idx.id}>
+                      {idx.name} ({idx.video_count} videos)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Video dropdown */}
+            {tlSelectedIndex && (
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+                  Select Video
+                </label>
+                {tlLoadingVideos ? (
+                  <div className="flex items-center gap-2 text-xs text-muted py-2">
+                    <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Loading videos...
+                  </div>
+                ) : (
+                  <select
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+                    value={tlSelectedVideo}
+                    onChange={(e) => setTlSelectedVideo(e.target.value)}
+                  >
+                    <option value="">Select a video...</option>
+                    {tlVideos.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name} ({Math.round(v.duration)}s)
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+
+            {/* Loading URL indicator */}
+            {tlLoadingUrl && (
+              <div className="flex items-center gap-2 text-xs text-emerald-400 py-1">
+                <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Loading video...
+              </div>
+            )}
+
+            {/* Error */}
+            {tlError && (
+              <p className="text-[11px] text-red-400">{tlError}</p>
+            )}
           </section>
         )}
 

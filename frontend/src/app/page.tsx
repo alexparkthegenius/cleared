@@ -102,6 +102,29 @@ export default function Home() {
     }
   }, [videoUrl]);
 
+  const handleTwelveLabsVideoSelect = useCallback(
+    (hlsUrl: string, indexId: string, videoId: string) => {
+      // Set the HLS URL as the video source for the player
+      setVideoUrl(hlsUrl);
+      // Use a twelvelabs:// pseudo-URI so the rest of the app has a reference
+      const pseudoUri = `twelvelabs://${indexId}/${videoId}`;
+      setS3Uri(pseudoUri);
+      s3UriRef.current = pseudoUri;
+      uploadDoneRef.current = true;
+      setIsUploading(false);
+      setUploadError(null);
+      // Clear previous analysis
+      setFindings([]);
+      setRiskScore(null);
+      setRiskExplanation("");
+      setRightsEntries([]);
+      setCurrentTime(0);
+      setSeekTarget(null);
+      console.log("TwelveLabs video selected:", hlsUrl, pseudoUri);
+    },
+    []
+  );
+
   const handleSeek = useCallback((time: number) => {
     setCurrentTime(time);
     setSeekTarget(time);
@@ -287,6 +310,7 @@ export default function Home() {
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         onFileSelect={handleFileSelect}
+        onTwelveLabsVideoSelect={handleTwelveLabsVideoSelect}
         onRunCheck={handleRunCheck}
         isAnalyzing={isAnalyzing}
         theme={theme}

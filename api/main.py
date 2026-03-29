@@ -15,6 +15,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+import httpx
 
 load_dotenv()
 
@@ -289,11 +290,43 @@ async def analyze_video(req: AnalyzeRequest):
 
     t0 = time.time()
 
+    # Handle TwelveLabs pseudo-URI — download video and re-upload to S3
+    analysis_s3_uri = req.s3_uri
+    if req.s3_uri.startswith("twelvelabs://"):
+        try:
+            parts = req.s3_uri.replace("twelvelabs://", "").split("/")
+            tl_index_id, tl_video_id = parts[0], parts[1]
+            log.info(f"TwelveLabs source detected: index={tl_index_id}, video={tl_video_id}")
+            # Fetch HLS/video URL from TwelveLabs
+            import httpx as _httpx
+            tl_resp = _httpx.get(
+                f"https://api.twelvelabs.io/v1.3/indexes/{tl_index_id}/videos/{tl_video_id}",
+                headers={"x-api-key": TWELVELABS_API_KEY},
+                timeout=15.0,
+            )
+            tl_data = tl_resp.json()
+            tl_video_url = tl_data.get("hls", {}).get("video_url")
+            if not tl_video_url:
+                raise ValueError("No video URL returned from TwelveLabs")
+            log.info(f"TwelveLabs video URL: {tl_video_url[:80]}...")
+            # Download video bytes
+            dl_resp = _httpx.get(tl_video_url, timeout=120.0, follow_redirects=True)
+            dl_resp.raise_for_status()
+            video_bytes = dl_resp.content
+            log.info(f"Downloaded TwelveLabs video: {len(video_bytes)} bytes")
+            # Upload to S3
+            s3_filename = f"twelvelabs_{tl_video_id}.mp4"
+            analysis_s3_uri = upload_to_s3(video_bytes, s3_filename)
+            log.info(f"Re-uploaded TwelveLabs video to S3: {analysis_s3_uri}")
+        except Exception:
+            log.exception("Failed to fetch/re-upload TwelveLabs video for Pegasus")
+            raise HTTPException(status_code=500, detail="Failed to fetch video from TwelveLabs for analysis.")
+
     # Run Pegasus
     try:
-        log.info(f"Invoking Pegasus: s3_uri={req.s3_uri[:60]}...")
+        log.info(f"Invoking Pegasus: s3_uri={analysis_s3_uri[:60]}...")
         report_data = run_pegasus_analysis(
-            video_s3_uri=req.s3_uri,
+            video_s3_uri=analysis_s3_uri,
             prompt=prompt,
         )
     except Exception:
@@ -462,12 +495,108 @@ async def get_audio_flags():
 
 
 # ══════════════════════════════════════════════════════════════
+# TwelveLabs Index / Video Picker
+# ══════════════════════════════════════════════════════════════
+
+
+@app.get("/api/twelvelabs/indexes")
+async def list_twelvelabs_indexes():
+    """List all TwelveLabs indexes."""
+    if not TWELVELABS_API_KEY:
+        log.error("TWELVELABS_API_KEY not set")
+        raise HTTPException(status_code=503, detail="TWELVELABS_API_KEY not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                "https://api.twelvelabs.io/v1.3/indexes",
+                headers={"x-api-key": TWELVELABS_API_KEY},
+            )
+        if resp.status_code != 200:
+            log.error(f"TwelveLabs indexes error: {resp.status_code} {resp.text[:300]}")
+            raise HTTPException(status_code=502, detail=f"TwelveLabs API error ({resp.status_code})")
+        data = resp.json().get("data", [])
+        log.info(f"TwelveLabs indexes: {len(data)} found")
+        return [
+            {"id": idx["_id"], "name": idx.get("index_name", idx["_id"]), "video_count": idx.get("video_count", 0)}
+            for idx in data
+        ]
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("Failed to fetch TwelveLabs indexes")
+        raise HTTPException(status_code=500, detail="Failed to fetch TwelveLabs indexes")
+
+
+@app.get("/api/twelvelabs/indexes/{index_id}/videos")
+async def list_twelvelabs_videos(index_id: str):
+    """List videos in a TwelveLabs index."""
+    if not TWELVELABS_API_KEY:
+        raise HTTPException(status_code=503, detail="TWELVELABS_API_KEY not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"https://api.twelvelabs.io/v1.3/indexes/{index_id}/videos",
+                headers={"x-api-key": TWELVELABS_API_KEY},
+            )
+        if resp.status_code != 200:
+            log.error(f"TwelveLabs videos error: {resp.status_code} {resp.text[:300]}")
+            raise HTTPException(status_code=502, detail=f"TwelveLabs API error ({resp.status_code})")
+        data = resp.json().get("data", [])
+        log.info(f"TwelveLabs videos for index {index_id}: {len(data)} found")
+        return [
+            {
+                "id": v["_id"],
+                "name": v.get("metadata", {}).get("filename", v.get("system_metadata", {}).get("filename", v["_id"])),
+                "duration": v.get("metadata", {}).get("duration", v.get("system_metadata", {}).get("duration", 0)),
+                "thumbnail_url": v.get("hls", {}).get("thumbnail_urls", [None])[0] if v.get("hls") else None,
+                "hls_url": v.get("hls", {}).get("video_url"),
+            }
+            for v in data
+        ]
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception(f"Failed to fetch TwelveLabs videos for index {index_id}")
+        raise HTTPException(status_code=500, detail="Failed to fetch TwelveLabs videos")
+
+
+@app.get("/api/twelvelabs/videos/{index_id}/{video_id}/url")
+async def get_twelvelabs_video_url(index_id: str, video_id: str):
+    """Get playback URL for a specific TwelveLabs video."""
+    if not TWELVELABS_API_KEY:
+        raise HTTPException(status_code=503, detail="TWELVELABS_API_KEY not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"https://api.twelvelabs.io/v1.3/indexes/{index_id}/videos/{video_id}",
+                headers={"x-api-key": TWELVELABS_API_KEY},
+            )
+        if resp.status_code != 200:
+            log.error(f"TwelveLabs video URL error: {resp.status_code} {resp.text[:300]}")
+            raise HTTPException(status_code=502, detail=f"TwelveLabs API error ({resp.status_code})")
+        data = resp.json()
+        hls = data.get("hls", {})
+        log.info(f"TwelveLabs video URL fetched: index={index_id}, video={video_id}")
+        return {
+            "hls_url": hls.get("video_url"),
+            "thumbnail_url": (hls.get("thumbnail_urls", [None]) or [None])[0],
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception(f"Failed to fetch TwelveLabs video URL: {index_id}/{video_id}")
+        raise HTTPException(status_code=500, detail="Failed to fetch TwelveLabs video URL")
+
+
+# ══════════════════════════════════════════════════════════════
 # LTX Video Regeneration
 # ══════════════════════════════════════════════════════════════
 
-import httpx
-
 LTX_API_KEY = os.environ.get("LTX_API_KEY", "")
+TWELVELABS_API_KEY = os.environ.get("TWELVELABS_API_KEY", "")
 
 REGEN_MODES = {"replace_video", "replace_audio", "replace_audio_and_video"}
 
