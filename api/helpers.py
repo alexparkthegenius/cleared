@@ -372,45 +372,43 @@ TIMESTAMP RULES:
 Format: [MM:SS] asset type — description — Clearance needed: YES/MAYBE/NO
 """ if include_rights else ""
 
-    return f"""You are a senior compliance reviewer. You MUST ONLY flag violations that match the specific rules listed below. Do NOT invent, infer, or speculate about violations not covered by these rules. If you are not confident a violation exists, do NOT report it. Only report what you can directly observe in the video.
+    return f"""Watch this video carefully from start to finish. You are checking it for compliance before it airs on: {platforms_text}.
 
-IMPORTANT CONSTRAINTS:
-- Only flag items that clearly violate a rule listed below
-- Confidence must reflect how certain you are: use 30-50 for uncertain, 50-70 for likely, 70-90 for clear, 90+ only for unambiguous
-- If a category has no violations, write: NOT DETECTED
-- Do NOT flag normal, compliant content
-- Do NOT flag things that "could potentially" be an issue — only flag what IS an issue
-- ALL timestamps MUST be the ACTUAL video playback time (MM:SS) where the item appears. Do NOT use sequential numbering like 00:00, 00:01, 00:02. Use real timecodes from the video timeline.
+It must comply with these regulations: {jurisdiction_text}
 
-TARGET PLATFORMS: {platforms_text}
-
-RULES TO CHECK ({ruleset_name}):
+STEP 1 — STANDARDS & PRACTICES (S+P)
+Watch for these specific violations:
 {rules_text}
 
-AUDIO RULES TO CHECK:
+Audio violations to check:
 {audio_text}
 
-FORMAT — use this exact structure for every finding:
+For EVERY violation you find, report it as:
+[MM:SS] What you see or hear — Which rule it violates — Severity: CRITICAL/MAJOR/MINOR — Confidence: 0-100
 
-SECTION 1 - CONTENT FLAGS
-For each violation of the rules above:
-[MM:SS] Description of exactly what is visible/audible — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
+CRITICAL = must be fixed before airing (nudity, minors at risk, hate speech)
+MAJOR = likely needs fixing (alcohol without context, unlicensed music, profanity)
+MINOR = flag for review (brand visible, talent recognition, background signage)
 
-SECTION 2 - AUDIO FLAGS
-For each audio violation:
-[MM:SS] Description of audio content — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
+STEP 2 — RIGHTS & CLEARANCES (R+C)
+Scan the full video for anything requiring clearance:
+- Brand logos, trademarks, product packaging
+- Identifiable talent (faces clearly visible)
+- Artwork, paintings, sculptures on screen
+- Music, sound effects, jingles
+- Architectural works, set designs
+- Archive footage, news clips
 
-{rights_section}
+For EACH item, report the EXACT timecode where it FIRST appears:
+[MM:SS] What it is — Description — Clearance needed: YES/NO
 
-SECTION 4 - PLATFORM SUITABILITY
-For each platform in [{platforms_text}]:
-[platform]: APPROVED / FLAGGED / REJECTED — reason [timestamps if relevant]
+IMPORTANT: The timecode must be the real playback position. If a logo appears 30 seconds in, write [00:30]. Do NOT list everything at [00:00].
 
-SECTION 5 - REGULATORY REVIEW
-{jurisdiction_text}
-For each jurisdiction: COMPLIANT / FLAG — specific rule — evidence
+STEP 3 — PLATFORM & JURISDICTION FLAGS
+For each platform ({platforms_text}), state: APPROVED or FLAGGED with reason and timecode.
+For each jurisdiction, state: COMPLIANT or FLAG with specific regulation and evidence timecode.
 
-SECTION 6 - OVERALL
-APPROVED FOR DISTRIBUTION / NEEDS REVIEW / REJECTED
-Risk: CRITICAL / HIGH / MEDIUM / LOW
-One paragraph summary for client."""
+STEP 4 — OVERALL
+State: APPROVED / NEEDS REVIEW / REJECTED
+Risk level: CRITICAL / HIGH / MEDIUM / LOW
+One sentence summary."""
