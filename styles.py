@@ -415,6 +415,15 @@ section[data-testid="stSidebar"] .stCaption p {
     position: relative !important;
     z-index: 1 !important;
 }
+/* sidebar "All" buttons — small inline pill */
+.stApp section[data-testid="stSidebar"] .stButton > button {
+    padding: 0.2rem 0.5rem !important;
+    font-size: 0.6rem !important;
+    min-height: unset !important;
+    height: auto !important;
+    letter-spacing: 0.06em !important;
+}
+
 /* sidebar expander specific fixes */
 .stApp section[data-testid="stSidebar"] .stExpander {
     margin-bottom: 0.5rem !important;

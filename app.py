@@ -477,21 +477,23 @@ with st.sidebar:
         st.caption("No video selected")
 
     # ── 2. TARGET PLATFORMS ──
-    _sidebar_label("2. Target Platforms")
-    _plat_col1, _plat_col2 = st.columns([3, 1])
-    with _plat_col2:
-        if st.button("All", key="all_platforms", use_container_width=True):
+    _plat_header_col1, _plat_header_col2 = st.columns([4, 1])
+    with _plat_header_col1:
+        _sidebar_label("2. Target Platforms")
+    with _plat_header_col2:
+        if st.button("All", key="all_platforms"):
             st.session_state["_platforms_default"] = list(PLATFORMS)
     _plat_default = st.session_state.get("_platforms_default", [])
     selected_platforms = st.multiselect("platforms", PLATFORMS, default=_plat_default, label_visibility="collapsed",
                                         placeholder="Where will this air?")
 
     # ── 3. JURISDICTIONS ──
-    _sidebar_label("3. Jurisdictions")
-    _jur_col1, _jur_col2 = st.columns([3, 1])
+    _jur_header_col1, _jur_header_col2 = st.columns([4, 1])
     _jur_options = [k for k in JURISDICTIONS.keys() if k != "None"]
-    with _jur_col2:
-        if st.button("All", key="all_jurisdictions", use_container_width=True):
+    with _jur_header_col1:
+        _sidebar_label("3. Jurisdictions")
+    with _jur_header_col2:
+        if st.button("All", key="all_jurisdictions"):
             st.session_state["_jurisdictions_default"] = _jur_options
     _jur_default = st.session_state.get("_jurisdictions_default", [])
     selected_jurisdictions = st.multiselect("jurisdictions", _jur_options, default=_jur_default, label_visibility="collapsed",
