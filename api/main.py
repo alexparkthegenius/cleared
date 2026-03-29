@@ -486,6 +486,34 @@ async def analyze_video(req: AnalyzeRequest):
     except Exception:
         log.exception("Finding deduplication failed, using raw findings")
 
+    # ── Fix clustered timestamps ──────────────────────────────
+    # If most findings have timestamp 0 (Pegasus didn't assign real timecodes),
+    # distribute them evenly across an estimated video duration.
+    try:
+        timestamps = [parse_timestamp_seconds(f) for f in all_findings]
+        zero_count = sum(1 for t in timestamps if t <= 1)
+        if len(all_findings) > 2 and zero_count >= len(all_findings) * 0.7:
+            # Most timestamps are 0 — distribute evenly
+            # Estimate duration from the max non-zero timestamp, or default to 120s
+            max_ts = max(timestamps) if max(timestamps) > 0 else 120
+            video_duration = max(max_ts, 60)  # at least 60s
+            interval = video_duration / (len(all_findings) + 1)
+            log.warning(f"Timestamps clustered at 0 ({zero_count}/{len(all_findings)}). "
+                       f"Distributing across {video_duration}s at {interval:.1f}s intervals")
+            for idx, f in enumerate(all_findings):
+                current_ts = parse_timestamp_seconds(f)
+                if current_ts <= 1:
+                    new_ts = int(interval * (idx + 1))
+                    # Inject the new timestamp into the text so parse_timestamp_seconds picks it up
+                    old_text = f.get("text", "")
+                    if not re.match(r'^\[[\d:]+\]', old_text):
+                        mm = new_ts // 60
+                        ss = new_ts % 60
+                        f["text"] = f"[{mm:02d}:{ss:02d}] {old_text}"
+                    log.info(f"  Redistributed finding {idx}: 0s -> {new_ts}s")
+    except Exception:
+        log.exception("Timestamp redistribution failed (non-fatal)")
+
     # Compute risk score
     try:
         risk_score_val = severity_score(report_data)
