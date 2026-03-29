@@ -327,31 +327,118 @@ async def analyze_video(req: AnalyzeRequest):
             log.exception("Failed to fetch/re-upload TwelveLabs video for Pegasus")
             raise HTTPException(status_code=500, detail="Failed to fetch video from TwelveLabs for analysis.")
 
-    # Run Pegasus
-    try:
-        log.info(f"Invoking Pegasus: s3_uri={analysis_s3_uri[:60]}...")
-        report_data = run_pegasus_analysis(
-            video_s3_uri=analysis_s3_uri,
-            prompt=prompt,
-        )
-    except Exception:
-        elapsed = round(time.time() - t0, 1)
-        log.exception(f"Pegasus invocation failed after {elapsed}s: s3_uri={req.s3_uri[:60]}")
-        raise HTTPException(
-            status_code=500,
-            detail="Pegasus analysis failed. Check AWS credentials, S3 permissions, and video format.",
-        )
+    # ── Try TwelveLabs SDK direct analysis first (better timecodes) ──
+    report_data = None
+    analysis_method = "unknown"
+
+    if TWELVELABS_API_KEY:
+        try:
+            log.info("Attempting TwelveLabs direct analysis (better temporal accuracy)...")
+            import httpx as _httpx
+
+            tl_headers = {"x-api-key": TWELVELABS_API_KEY, "Content-Type": "application/json"}
+
+            # If source is TwelveLabs, use the video ID directly
+            tl_video_id = None
+            tl_index_id = None
+            if req.s3_uri.startswith("twelvelabs://"):
+                parts = req.s3_uri.replace("twelvelabs://", "").split("/")
+                tl_index_id, tl_video_id = parts[0], parts[1]
+                log.info(f"Using existing TwelveLabs video: index={tl_index_id}, video={tl_video_id}")
+            else:
+                # For S3 uploads, find or create an index and upload the video
+                # First, get presigned URL for the S3 video
+                presigned_url = get_s3_presigned_url(analysis_s3_uri)
+                if presigned_url:
+                    # Find existing index or use default
+                    idx_resp = _httpx.get("https://api.twelvelabs.io/v1.3/indexes",
+                                         headers={"x-api-key": TWELVELABS_API_KEY}, timeout=15.0)
+                    indexes = idx_resp.json().get("data", [])
+                    if indexes:
+                        tl_index_id = indexes[0]["_id"]
+                        log.info(f"Using existing TwelveLabs index: {tl_index_id}")
+                    else:
+                        # Create index
+                        create_resp = _httpx.post("https://api.twelvelabs.io/v1.3/indexes",
+                            headers=tl_headers,
+                            json={"index_name": "cleared-compliance", "models": [{"model_name": "marengo2.7", "options": ["visual", "audio"]}]},
+                            timeout=15.0)
+                        tl_index_id = create_resp.json().get("_id")
+                        log.info(f"Created TwelveLabs index: {tl_index_id}")
+
+                    if tl_index_id:
+                        # Upload video via URL
+                        upload_resp = _httpx.post(f"https://api.twelvelabs.io/v1.3/tasks",
+                            headers=tl_headers,
+                            json={"index_id": tl_index_id, "url": presigned_url},
+                            timeout=30.0)
+                        task_data = upload_resp.json()
+                        task_id = task_data.get("_id")
+                        tl_video_id = task_data.get("video_id")
+                        log.info(f"TwelveLabs upload task: {task_id}, video: {tl_video_id}")
+
+                        # Wait for indexing (up to 120s)
+                        if task_id:
+                            for _ in range(60):
+                                status_resp = _httpx.get(f"https://api.twelvelabs.io/v1.3/tasks/{task_id}",
+                                    headers={"x-api-key": TWELVELABS_API_KEY}, timeout=10.0)
+                                status = status_resp.json().get("status")
+                                if status == "ready":
+                                    log.info("TwelveLabs indexing complete")
+                                    break
+                                elif status == "failed":
+                                    log.error("TwelveLabs indexing failed")
+                                    tl_video_id = None
+                                    break
+                                import asyncio
+                                await asyncio.sleep(2)
+
+            # Now run analysis via TwelveLabs
+            if tl_video_id and tl_index_id:
+                analyze_resp = _httpx.post("https://api.twelvelabs.io/v1.3/analyze",
+                    headers=tl_headers,
+                    json={
+                        "video_id": tl_video_id,
+                        "prompt": prompt,
+                    },
+                    timeout=300.0)
+                if analyze_resp.status_code == 200:
+                    tl_result = analyze_resp.json()
+                    report_data = tl_result.get("data", tl_result.get("text", str(tl_result)))
+                    analysis_method = "twelvelabs-direct"
+                    log.info(f"TwelveLabs direct analysis success: {len(report_data)} chars")
+                else:
+                    log.warning(f"TwelveLabs analyze failed ({analyze_resp.status_code}): {analyze_resp.text[:200]}")
+        except Exception:
+            log.exception("TwelveLabs direct analysis failed, falling back to Bedrock")
+
+    # ── Fall back to Bedrock Pegasus if TwelveLabs didn't work ──
+    if not report_data:
+        try:
+            log.info(f"Invoking Bedrock Pegasus: s3_uri={analysis_s3_uri[:60]}...")
+            report_data = run_pegasus_analysis(
+                video_s3_uri=analysis_s3_uri,
+                prompt=prompt,
+            )
+            analysis_method = "bedrock-pegasus"
+        except Exception:
+            elapsed = round(time.time() - t0, 1)
+            log.exception(f"Pegasus invocation failed after {elapsed}s: s3_uri={req.s3_uri[:60]}")
+            raise HTTPException(
+                status_code=500,
+                detail="Analysis failed via both TwelveLabs and Bedrock. Check credentials.",
+            )
 
     if not report_data:
         elapsed = round(time.time() - t0, 1)
-        log.error(f"Pegasus returned empty response after {elapsed}s: s3_uri={req.s3_uri[:60]}")
+        log.error(f"All analysis methods returned empty after {elapsed}s")
         raise HTTPException(
             status_code=500,
-            detail="Pegasus analysis returned no results. Check AWS credentials and video input.",
+            detail="Analysis returned no results from any provider.",
         )
 
     elapsed = round(time.time() - t0, 1)
-    log.info(f"Pegasus complete: {elapsed}s, response_length={len(report_data)} chars")
+    log.info(f"Analysis complete ({analysis_method}): {elapsed}s, response_length={len(report_data)} chars")
     log.info(f"Report preview: {report_data[:200]}...")
 
     # Parse findings
@@ -486,58 +573,14 @@ async def analyze_video(req: AnalyzeRequest):
     except Exception:
         log.exception("Finding deduplication failed, using raw findings")
 
-    # ── Fix clustered timestamps via second Pegasus call ──────
-    # Content flags get real timecodes. Rights findings often cluster at 0:00.
-    # Run a targeted second Pegasus call asking ONLY for timestamps of assets.
-    try:
+    # ── Timestamp note: TwelveLabs direct has better timecodes than Bedrock ──
+    if analysis_method == "bedrock-pegasus":
         rights_with_ts = [f for f in all_findings if f.get("source") == "rights"]
         rights_timestamps = [parse_timestamp_seconds(f) for f in rights_with_ts]
         rights_zero_count = sum(1 for t in rights_timestamps if t <= 1)
-
         if len(rights_with_ts) > 1 and rights_zero_count >= len(rights_with_ts) * 0.5:
-            # Build a targeted timestamp query
-            asset_list = []
-            for idx, f in enumerate(rights_with_ts):
-                desc = f.get("text", "")[:60]
-                asset_list.append(f"{idx+1}. {desc}")
-            assets_text = "\n".join(asset_list)
-
-            ts_prompt = f"""For each of the following items found in this video, tell me the EXACT video timecode (MM:SS) where it FIRST becomes visible or audible. Watch the entire video carefully.
-
-{assets_text}
-
-Reply with ONLY a numbered list in this exact format, one per line:
-1. [MM:SS]
-2. [MM:SS]
-3. [MM:SS]
-...
-
-Do NOT use [00:00] unless the item truly appears in the very first second. Watch the full video."""
-
-            log.info(f"Running targeted timestamp Pegasus call for {len(rights_with_ts)} rights findings")
-            try:
-                ts_response = run_pegasus_analysis(
-                    video_s3_uri=analysis_s3_uri,
-                    prompt=ts_prompt,
-                )
-                if ts_response:
-                    log.info(f"Timestamp response: {ts_response[:300]}")
-                    # Parse numbered list: "1. [00:25]" or "1. 00:25"
-                    ts_matches = re.findall(r'(\d+)\.\s*\[?(\d{1,2}):(\d{2})\]?', ts_response)
-                    for num_str, mm, ss in ts_matches:
-                        idx = int(num_str) - 1
-                        if 0 <= idx < len(rights_with_ts):
-                            new_ts = int(mm) * 60 + int(ss)
-                            if new_ts > 0:  # Only override if non-zero
-                                old_text = rights_with_ts[idx].get("text", "")
-                                # Remove old timestamp if present
-                                old_text = re.sub(r'^\[[\d:]+\]\s*', '', old_text)
-                                rights_with_ts[idx]["text"] = f"[{int(mm):02d}:{int(ss):02d}] {old_text}"
-                                log.info(f"  Rights finding {idx}: updated to {mm}:{ss}")
-            except Exception:
-                log.exception("Targeted timestamp Pegasus call failed (non-fatal, keeping original timestamps)")
-    except Exception:
-        log.exception("Rights timestamp fix failed (non-fatal)")
+            log.warning(f"Bedrock rights timestamps clustered at 0 ({rights_zero_count}/{len(rights_with_ts)}). "
+                       "TwelveLabs direct was used as primary — this is a fallback path.")
 
     # Compute risk score
     try:
