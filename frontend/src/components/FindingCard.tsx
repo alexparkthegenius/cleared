@@ -80,7 +80,7 @@ export default function FindingCard({
           )}
         </div>
         <span className="text-[10px] text-muted whitespace-nowrap tabular-nums">
-          {Math.round(finding.confidence * 100)}% conf
+          {Math.round(finding.confidence)}% conf
         </span>
       </div>
 

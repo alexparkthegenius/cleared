@@ -51,22 +51,22 @@ export default function ComplianceFindings({
             </span>
           </div>
           <p className="text-xs text-muted leading-relaxed">{riskExplanation}</p>
-          <div className="flex gap-4 mt-3">
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-red-500" />
-              <span className="text-[11px] text-muted">
+          <div className="flex flex-wrap gap-6 mt-3">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" />
+              <span className="text-xs text-muted whitespace-nowrap">
                 {critical} Critical
               </span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-orange-500" />
-              <span className="text-[11px] text-muted">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-orange-500 flex-shrink-0" />
+              <span className="text-xs text-muted whitespace-nowrap">
                 {major} Major
               </span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="text-[11px] text-muted">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0" />
+              <span className="text-xs text-muted whitespace-nowrap">
                 {minor} Minor
               </span>
             </div>
