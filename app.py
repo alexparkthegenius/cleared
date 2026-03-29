@@ -904,7 +904,41 @@ with tab_rights:
     rights_entries = load_rights_log()
     all_rights = auto_rights + rights_entries
 
-    expiring = get_expiring_rights(all_rights, days_ahead=30)
+    # ── Filters ──
+    st.markdown("### Rights & Clearances")
+    _filter_cols = st.columns(5)
+    _rights_filter = _filter_cols[0].selectbox("Filter by type", ["All", "Music license", "SFX library", "Talent release", "Artwork clearance", "Brand license", "Archive footage", "Other"], key="rights_type_filter")
+    _rights_status = _filter_cols[1].selectbox("Status", ["All", "Expiring soon (≤30d)", "Expired", "Active", "Available soon"], key="rights_status_filter")
+    _rights_library = _filter_cols[2].selectbox("Library", ["All", "Epidemic Sound", "Artlist", "Musicbed", "APM Music", "Shutterstock", "Getty Images", "Pond5", "Custom"], key="rights_library_filter")
+    _rights_sort = _filter_cols[3].selectbox("Sort by", ["Expiry date", "Asset name", "Type", "Recently added"], key="rights_sort")
+    _rights_search = _filter_cols[4].text_input("Search", placeholder="asset name...", key="rights_search")
+
+    # apply filters to all_rights
+    _filtered_rights = all_rights[:]
+    if _rights_filter != "All":
+        _filtered_rights = [e for e in _filtered_rights if e.get("type", "") == _rights_filter]
+    if _rights_search:
+        _q = _rights_search.lower()
+        _filtered_rights = [e for e in _filtered_rights if _q in e.get("asset", "").lower() or _q in e.get("notes", "").lower()]
+    if _rights_status != "All":
+        _status_filtered = []
+        for e in _filtered_rights:
+            try:
+                _days = (date.fromisoformat(e.get("expiry_date", "")) - date.today()).days
+            except Exception:
+                _days = 999
+            if _rights_status == "Expiring soon (≤30d)" and 0 < _days <= 30:
+                _status_filtered.append(e)
+            elif _rights_status == "Expired" and _days <= 0:
+                _status_filtered.append(e)
+            elif _rights_status == "Active" and _days > 30:
+                _status_filtered.append(e)
+            elif _rights_status == "Available soon" and e.get("available_date"):
+                _status_filtered.append(e)
+        _filtered_rights = _status_filtered
+
+    # expiring alerts
+    expiring = get_expiring_rights(_filtered_rights, days_ahead=30)
     if expiring:
         for e in expiring:
             days = e.get("days_remaining", "?")
@@ -913,13 +947,12 @@ with tab_rights:
                         f'<b>{e.get("asset","")}</b> — expires {e.get("expiry_date","?")} ({days} days) — {e.get("type","")}</div>',
                         unsafe_allow_html=True)
 
-    st.markdown("### Rights & Clearances")
-
     # auto-detected section
-    if auto_rights:
+    _auto_filtered = [e for e in _filtered_rights if e in auto_rights]
+    if _auto_filtered:
         st.markdown('<p style="font-size:0.62rem;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;'
                     'font-weight:600;margin-bottom:0.5rem;">Auto-detected from video</p>', unsafe_allow_html=True)
-        for e in auto_rights:
+        for e in _auto_filtered:
             tag_color = "#7c3aed"
             st.markdown(f'<div class="finding-card" style="border-left:3px solid {tag_color};">'
                         f'<b>{html_mod.escape(e.get("asset",""))}</b> · '
@@ -932,7 +965,7 @@ with tab_rights:
     with st.expander("+ add rights entry", expanded=False):
         r1, r2, r3, r4 = st.columns(4)
         r_asset = r1.text_input("asset name", placeholder="e.g. Track — Blue World")
-        r_type = r2.selectbox("type", ["Music license", "Talent release", "Artwork clearance", "Brand license", "Archive footage", "Other"])
+        r_type = r2.selectbox("type", ["Music license", "SFX library", "Talent release", "Artwork clearance", "Brand license", "Archive footage", "Other"])
         r_expiry = r3.date_input("expiry date")
         r_notes = r4.text_input("notes", placeholder="licensor, territory...")
         if st.button("add to tracker"):
@@ -1061,11 +1094,37 @@ with tab_export:
 
         # deliverable spec
         st.markdown("### Deliverable Spec")
-        deliverable = st.selectbox("Output format", [
-            "Broadcast ProRes 422HQ (1920x1080)",
-            "Web H.264 (1920x1080, AAC audio)",
-            "Social H.264 (1080x1920 vertical, AAC audio)",
-        ], label_visibility="collapsed")
+        _spec_col1, _spec_col2 = st.columns(2)
+        with _spec_col1:
+            deliverable = st.selectbox("Output format", [
+                "Broadcast ProRes 422HQ (1920x1080)",
+                "Broadcast ProRes 4444 (1920x1080)",
+                "Web H.264 (1920x1080, AAC audio)",
+                "Social H.264 (1080x1920 vertical, AAC audio)",
+                "EXR sequence (2K, 16-bit)",
+            ], label_visibility="collapsed")
+        with _spec_col2:
+            deliver_to = st.selectbox("Deliver to", [
+                "Local download",
+                "YouTube",
+                "TikTok",
+                "Instagram",
+                "A&E Networks",
+                "Netflix (Backlot)",
+                "HBO Max",
+                "Broadcast (file delivery)",
+                "The Sphere",
+                "Roblox",
+            ], label_visibility="collapsed", key="deliver_to")
+
+        st.markdown("### Exchange Formats")
+        _exchange_col1, _exchange_col2, _exchange_col3 = st.columns(3)
+        with _exchange_col1:
+            _inc_xml = st.checkbox("XML (FCP/Premiere)", value=True)
+        with _exchange_col2:
+            _inc_otio = st.checkbox("OTIO (OpenTimeline)", value=True)
+        with _exchange_col3:
+            _inc_fbx = st.checkbox("FBX (3D/VFX)", value=False)
 
         st.markdown("---")
 
@@ -1084,6 +1143,7 @@ with tab_export:
                     "jurisdictions": st.session_state.get("jurisdictions"),
                     "risk_score": score,
                     "deliverable_spec": deliverable,
+                    "deliver_to": deliver_to,
                     "findings": [
                         {
                             "text": finding_text(f),
