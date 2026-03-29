@@ -291,14 +291,20 @@ def build_prompt(
 
     rights_section = """
 SECTION 3 - RIGHTS & CLEARANCES
-Identify ALL of the following requiring clearance:
+Watch the ENTIRE video timeline carefully. For each of the following asset types, report the EXACT moment (MM:SS) when it FIRST becomes visible or audible. You must scrub through the full video — do not just report the opening frames.
 - On-screen artworks, paintings, sculptures, installations
 - Brand logos, trademarks, product packaging
 - Identifiable talent (faces visible, recognizable)
 - Background music, sound effects, jingles
 - Architectural works, set designs
 - News footage, archival material
-CRITICAL: Use the ACTUAL video timecode (MM:SS) where each item FIRST APPEARS in the video. Do NOT use sequential numbering (00:00, 00:01, 00:02). The timestamp must reflect the real playback position in the video where the asset is visible or audible.
+
+TIMESTAMP RULES:
+- The [MM:SS] MUST be the real video playback time where the asset first appears
+- A 2-minute video will have assets appearing throughout — NOT all at [00:00]
+- If an asset appears at 45 seconds in, write [00:45], not [00:00]
+- If you cannot determine the exact timestamp, estimate based on the video position
+
 Format: [MM:SS] asset type — description — Clearance needed: YES/MAYBE/NO
 """ if include_rights else ""
 
