@@ -7,7 +7,7 @@ import re
 import logging
 from datetime import datetime, date, timedelta
 
-from .config import RULESETS, JURISDICTIONS
+from config import RULESETS, JURISDICTIONS
 
 _helpers_log = logging.getLogger("cleared.helpers")
 

@@ -18,15 +18,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS
-from .bedrock import (
+from config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS
+from bedrock import (
     is_bedrock_available,
     upload_to_s3,
     get_s3_presigned_url,
     run_pegasus_analysis,
     search_with_marengo,
 )
-from .helpers import (
+from helpers import (
     parse_findings,
     parse_rights_from_report,
     severity_score,
