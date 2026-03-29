@@ -580,48 +580,53 @@ async def regen_clip(req: RegenRequest):
 
     log.info(f"Regen request: finding={req.finding_id}, mode={req.mode}, start={req.start_time}, dur={req.duration}")
 
-    # Convert S3 URI to presigned HTTPS URL for LTX
-    video_url = req.video_uri
-    if video_url.startswith("s3://"):
-        log.info(f"Converting S3 URI to presigned URL: {video_url[:60]}")
-        presigned = get_s3_presigned_url(video_url)
-        if not presigned:
-            log.error(f"Failed to generate presigned URL for regen: {video_url[:60]}")
-            raise HTTPException(status_code=500, detail="Failed to generate presigned URL for source video")
-        video_url = presigned
-        log.info(f"Presigned URL generated: {video_url[:80]}...")
+    # Clamp duration to LTX max (20 seconds)
+    gen_duration = min(req.duration, 8.0)  # Keep short for fast generation
+    if gen_duration < 2.0:
+        gen_duration = 3.0
+
+    # Build a descriptive replacement prompt
+    replacement_prompt = (
+        f"Generate a clean replacement clip: {req.prompt}. "
+        f"Professional broadcast quality, natural lighting, smooth camera movement. "
+        f"No violations, brand-safe content."
+    )
 
     options: list[RegenOption] = []
 
+    # Use text-to-video (no input video limit) — generates from prompt alone
+    # This avoids the LTX retake frame count / duration limit
+    log.info(f"Using text-to-video for regen (avoids retake frame limit): dur={gen_duration}")
+
     # Option 1 — original prompt
     try:
-        mp4_1 = await _call_ltx_retake(video_url, req.prompt, req.start_time, req.duration, req.mode)
+        mp4_1 = await _call_ltx_text_to_video(replacement_prompt, gen_duration)
         url_1 = _upload_regen_clip(mp4_1, req.finding_id)
         options.append(RegenOption(
             id=f"{req.finding_id}_opt1",
             video_url=url_1,
-            prompt=req.prompt,
-            duration=req.duration,
+            prompt=replacement_prompt,
+            duration=gen_duration,
         ))
     except HTTPException:
         raise
     except Exception:
-        log.exception("LTX retake option 1 failed")
+        log.exception("LTX text-to-video option 1 failed")
         raise HTTPException(status_code=502, detail="LTX generation failed for option 1")
 
     # Option 2 — alternative angle
     try:
-        alt_prompt = f"{req.prompt}, alternative angle"
-        mp4_2 = await _call_ltx_retake(video_url, alt_prompt, req.start_time, req.duration, req.mode)
+        alt_prompt = f"{replacement_prompt} Alternative camera angle, wide establishing shot."
+        mp4_2 = await _call_ltx_text_to_video(alt_prompt, gen_duration)
         url_2 = _upload_regen_clip(mp4_2, req.finding_id)
         options.append(RegenOption(
             id=f"{req.finding_id}_opt2",
             video_url=url_2,
             prompt=alt_prompt,
-            duration=req.duration,
+            duration=gen_duration,
         ))
     except Exception:
-        log.exception("LTX retake option 2 failed (non-fatal)")
+        log.exception("LTX text-to-video option 2 failed (non-fatal)")
         # Still return option 1 if option 2 fails
 
     log.info(f"Regen complete: finding={req.finding_id}, options={len(options)}")
