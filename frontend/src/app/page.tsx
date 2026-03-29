@@ -243,26 +243,24 @@ export default function Home() {
       />
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-y-auto min-w-0">
-        {/* Video + Violations Row */}
-        <div className="flex-shrink-0 flex border-b border-border">
-          {/* Video Player — sticky context */}
-          <div className="flex-1 min-w-0 p-4 pb-2">
-            <div className="sticky top-0 z-10">
-              <VideoPlayer
-                videoUrl={videoUrl}
-                findings={findings}
-                currentTime={currentTime}
-                onTimeUpdate={setCurrentTime}
-                onSeek={handleSeek}
-                duration={duration}
-                onDurationChange={setDuration}
-              />
-            </div>
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Video + Violations Row — fixed height */}
+        <div className="flex border-b border-border" style={{ height: '55vh', minHeight: '300px' }}>
+          {/* Video Player */}
+          <div className="flex-1 min-w-0 p-3 pb-1">
+            <VideoPlayer
+              videoUrl={videoUrl}
+              findings={findings}
+              currentTime={currentTime}
+              onTimeUpdate={setCurrentTime}
+              onSeek={handleSeek}
+              duration={duration}
+              onDurationChange={setDuration}
+            />
           </div>
 
           {/* Violations Panel */}
-          <div className="w-64 flex-shrink-0 border-l border-border bg-surface overflow-hidden flex flex-col">
+          <div className="w-72 flex-shrink-0 border-l border-border bg-surface overflow-y-auto">
             <ViolationsPanel
               findings={findings}
               currentTime={currentTime}
@@ -271,15 +269,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Tab Bar */}
+        {/* Tab Bar — sticky */}
         <TabBar
           activeTab={activeTab}
           onTabChange={setActiveTab}
           findingsCount={findings.length}
         />
 
-        {/* Tab Content */}
-        <div className="flex-1 p-4 min-h-[400px]">
+        {/* Tab Content — scrollable */}
+        <div className="flex-1 overflow-y-auto p-4 pb-20">
           {activeTab === "compliance" && (
             <ComplianceFindings
               findings={findings}
