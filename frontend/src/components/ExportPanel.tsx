@@ -271,6 +271,53 @@ export default function ExportPanel({
         </div>
       </section>
 
+      {/* Findings Approval Dashboard */}
+      {findings.length > 0 && (
+        <section>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+            Findings Review Status
+          </label>
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-background/50 border-b border-border">
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Time</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Severity</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Finding</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Remediation</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {findings.map((f) => {
+                  const mm = Math.floor(f.timecode / 60);
+                  const ss = Math.floor(f.timecode % 60);
+                  const tc = `${mm}:${ss.toString().padStart(2, "0")}`;
+                  const sevColor = f.severity === "CRITICAL" ? "text-red-400" : f.severity === "MAJOR" ? "text-orange-400" : "text-blue-400";
+                  const decColor = f.decision === "approved" ? "text-emerald-400 bg-emerald-500/10" : f.decision === "rejected" ? "text-red-400 bg-red-500/10" : f.decision === "escalated" ? "text-amber-400 bg-amber-500/10" : "text-muted bg-background/50";
+                  const remLabel = f.remediation === "none" ? "—" : f.remediation;
+                  return (
+                    <tr key={f.id} className="border-t border-border/30 hover:bg-foreground/[0.02] transition-colors">
+                      <td className="px-3 py-2 text-emerald-400 font-mono tabular-nums">{tc}</td>
+                      <td className="px-3 py-2">
+                        <span className={`text-[10px] font-bold uppercase ${sevColor}`}>{f.severity}</span>
+                      </td>
+                      <td className="px-3 py-2 text-foreground max-w-[250px] truncate">{f.text.slice(0, 60)}{f.text.length > 60 ? "..." : ""}</td>
+                      <td className="px-3 py-2 text-muted text-[10px] uppercase">{remLabel}</td>
+                      <td className="px-3 py-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${decColor}`}>
+                          {f.decision}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* Deliverable Spec */}
       <section>
         <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
