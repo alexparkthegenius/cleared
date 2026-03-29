@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-border: var(--border-color);
+  --color-muted: var(--muted);
+  --color-critical: #dc2626;
+  --color-major: #ea580c;
+  --color-minor: #2563eb;
+  --font-mono: var(--font-jetbrains);
+}
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #e5e7eb;
+  --surface: #111111;
+  --border-color: #2a2a2a;
+  --muted: #6b7280;
+}
+
+[data-theme="light"] {
+  --background: #f8f9fa;
+  --foreground: #111827;
+  --surface: #ffffff;
+  --border-color: #d1d5db;
+  --muted: #6b7280;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+/* Custom scrollbar for webkit */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Video player custom styles */
+video::-webkit-media-controls {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+}

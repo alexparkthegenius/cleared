@@ -1,0 +1,378 @@
+"use client";
+
+import { useState } from "react";
+import type { VideoSource, Platform, Jurisdiction } from "@/types";
+
+const PLATFORMS: Platform[] = [
+  "YouTube",
+  "TikTok",
+  "Instagram",
+  "Broadcast pre-watershed",
+  "Streaming Netflix/HBO",
+  "Roblox",
+  "The Sphere",
+];
+
+const JURISDICTIONS: Jurisdiction[] = [
+  "OFCOM UK",
+  "FCC US",
+  "GDPR EU",
+  "ARPP France",
+  "CRTC Canada",
+  "Multi-region",
+];
+
+interface SidebarProps {
+  collapsed: boolean;
+  onToggle: () => void;
+  onFileSelect: (file: File) => void;
+  onRunCheck: (config: {
+    source: VideoSource;
+    platforms: Platform[];
+    jurisdictions: Jurisdiction[];
+    customRules: string;
+  }) => void;
+  isAnalyzing: boolean;
+  theme: "dark" | "light";
+  onThemeToggle: () => void;
+}
+
+export default function Sidebar({
+  collapsed,
+  onToggle,
+  onFileSelect,
+  onRunCheck,
+  isAnalyzing,
+  theme,
+  onThemeToggle,
+}: SidebarProps) {
+  const [source, setSource] = useState<VideoSource>("upload");
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
+  const [jurisdictions, setJurisdictions] = useState<Jurisdiction[]>([]);
+  const [customRules, setCustomRules] = useState("");
+  const [showCustomRules, setShowCustomRules] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  const togglePlatform = (p: Platform) => {
+    setPlatforms((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+    );
+  };
+
+  const toggleJurisdiction = (j: Jurisdiction) => {
+    setJurisdictions((prev) =>
+      prev.includes(j) ? prev.filter((x) => x !== j) : [...prev, j]
+    );
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) onFileSelect(file);
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onFileSelect(file);
+  };
+
+  if (collapsed) {
+    return (
+      <aside className="w-12 flex-shrink-0 bg-surface border-r border-border flex flex-col items-center py-4 gap-4">
+        <button
+          onClick={onToggle}
+          className="w-8 h-8 rounded-md bg-border/50 hover:bg-border flex items-center justify-center text-foreground/60 hover:text-foreground transition-colors"
+          title="Expand sidebar"
+        >
+          <svg
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            viewBox="0 0 24 24"
+          >
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+        <div
+          className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs font-bold"
+          title="Cleared"
+        >
+          C
+        </div>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="w-80 flex-shrink-0 bg-surface border-r border-border flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="px-5 pt-5 pb-4 flex items-center justify-between border-b border-border">
+        <h1 className="text-[2.4rem] font-bold leading-none tracking-tight text-foreground">
+          Cleared
+        </h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onThemeToggle}
+            className="w-8 h-8 rounded-md hover:bg-border/50 flex items-center justify-center text-muted hover:text-foreground transition-colors"
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? (
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+              </svg>
+            )}
+          </button>
+          <button
+            onClick={onToggle}
+            className="w-8 h-8 rounded-md hover:bg-border/50 flex items-center justify-center text-muted hover:text-foreground transition-colors"
+            title="Collapse sidebar"
+          >
+            <svg
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        {/* Video Source */}
+        <section>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+            Video Source
+          </label>
+          <div className="flex gap-1 bg-background rounded-lg p-1">
+            {(["upload", "twelvelabs", "iconik"] as VideoSource[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSource(s)}
+                className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  source === s
+                    ? "bg-emerald-500/20 text-emerald-400"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {s === "twelvelabs" ? "TwelveLabs" : s === "iconik" ? "Iconik" : "Upload"}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* File Upload Dropzone */}
+        {source === "upload" && (
+          <section>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+              Upload Video
+            </label>
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer ${
+                dragOver
+                  ? "border-emerald-500 bg-emerald-500/10"
+                  : "border-border hover:border-muted"
+              }`}
+            >
+              <input
+                type="file"
+                accept="video/*"
+                onChange={handleFileInput}
+                className="hidden"
+                id="file-upload"
+              />
+              <label htmlFor="file-upload" className="cursor-pointer">
+                <svg
+                  className="w-8 h-8 mx-auto mb-2 text-muted"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+                  />
+                </svg>
+                <p className="text-xs text-muted">
+                  Drop video or{" "}
+                  <span className="text-emerald-400 underline">browse</span>
+                </p>
+              </label>
+            </div>
+          </section>
+        )}
+
+        {/* TwelveLabs / Iconik placeholder */}
+        {source !== "upload" && (
+          <section>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+              {source === "twelvelabs" ? "TwelveLabs" : "Iconik"} Index
+            </label>
+            <input
+              type="text"
+              placeholder={`Enter ${source === "twelvelabs" ? "index" : "asset"} ID...`}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+            />
+          </section>
+        )}
+
+        {/* Target Platforms */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-muted">
+              Target Platforms
+            </label>
+            <button
+              onClick={() =>
+                setPlatforms(
+                  platforms.length === PLATFORMS.length ? [] : [...PLATFORMS]
+                )
+              }
+              className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors"
+            >
+              {platforms.length === PLATFORMS.length ? "Clear" : "All"}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {PLATFORMS.map((p) => (
+              <button
+                key={p}
+                onClick={() => togglePlatform(p)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                  platforms.includes(p)
+                    ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30"
+                    : "bg-background text-muted hover:text-foreground hover:bg-border/50"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* Jurisdictions */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-muted">
+              Jurisdictions
+            </label>
+            <button
+              onClick={() =>
+                setJurisdictions(
+                  jurisdictions.length === JURISDICTIONS.length
+                    ? []
+                    : [...JURISDICTIONS]
+                )
+              }
+              className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 transition-colors"
+            >
+              {jurisdictions.length === JURISDICTIONS.length ? "Clear" : "All"}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {JURISDICTIONS.map((j) => (
+              <button
+                key={j}
+                onClick={() => toggleJurisdiction(j)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                  jurisdictions.includes(j)
+                    ? "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30"
+                    : "bg-background text-muted hover:text-foreground hover:bg-border/50"
+                }`}
+              >
+                {j}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* Custom Rules */}
+        <section>
+          <button
+            onClick={() => setShowCustomRules(!showCustomRules)}
+            className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted hover:text-foreground transition-colors w-full"
+          >
+            <svg
+              width="12"
+              height="12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+              className={`transition-transform ${showCustomRules ? "rotate-90" : ""}`}
+            >
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+            Custom Rules
+          </button>
+          {showCustomRules && (
+            <textarea
+              value={customRules}
+              onChange={(e) => setCustomRules(e.target.value)}
+              placeholder="Add custom compliance rules..."
+              rows={4}
+              className="mt-2 w-full px-3 py-2 bg-background border border-border rounded-lg text-xs text-foreground placeholder:text-muted resize-none focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+            />
+          )}
+        </section>
+      </div>
+
+      {/* Run Button */}
+      <div className="px-5 py-4 border-t border-border">
+        <button
+          onClick={() =>
+            onRunCheck({ source, platforms, jurisdictions, customRules })
+          }
+          disabled={isAnalyzing}
+          className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-all active:scale-[0.98]"
+        >
+          {isAnalyzing ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg
+                className="animate-spin w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              Analyzing...
+            </span>
+          ) : (
+            "Run Compliance Check"
+          )}
+        </button>
+      </div>
+    </aside>
+  );
+}
