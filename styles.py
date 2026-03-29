@@ -150,7 +150,7 @@ section[data-testid="stSidebar"] {
 section[data-testid="stSidebar"] > div:first-child {
     padding-top: 0.25rem !important;
 }
-/* kill the collapse arrow gap */
+/* kill the collapse arrow gap and hide raw icon text */
 section[data-testid="stSidebar"] [data-testid="stSidebarCollapsedControl"],
 section[data-testid="stSidebar"] button[kind="header"],
 [data-testid="stSidebarCollapseButton"],
@@ -161,6 +161,31 @@ section[data-testid="stSidebar"] button[kind="header"],
     z-index: 999 !important;
     padding: 0.25rem !important;
     margin: 0 !important;
+    font-size: 0 !important;
+    overflow: hidden !important;
+    width: 24px !important;
+    height: 24px !important;
+    line-height: 0 !important;
+}
+/* hide the raw "keyboard_double_arrow" text from material icons */
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] span,
+section[data-testid="stSidebar"] [data-testid="collapsedControl"] span,
+[data-testid="stSidebarNavCollapseIcon"],
+[data-testid="stSidebarCollapseButton"] *,
+[data-testid="collapsedControl"] * {
+    font-size: 0 !important;
+    color: transparent !important;
+    overflow: hidden !important;
+    width: 24px !important;
+    height: 24px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] svg,
+section[data-testid="stSidebar"] [data-testid="collapsedControl"] svg {
+    font-size: 1rem !important;
+    width: 18px !important;
+    height: 18px !important;
+    fill: var(--text-muted) !important;
+    color: var(--text-muted) !important;
 }
 /* remove default top padding/margin that creates the dead space */
 section[data-testid="stSidebar"] .block-container,
