@@ -72,8 +72,12 @@ export default function Home() {
     setVideoUrl(url);
     setVideoFile(file);
     setUploadError(null);
-    setIsUploading(true);
+
+    // Reset S3 state BEFORE starting new upload
+    setS3Uri(null);
+    s3UriRef.current = null;
     uploadDoneRef.current = false;
+    setIsUploading(true);
 
     // Clear previous analysis state
     setFindings([]);
@@ -320,6 +324,7 @@ export default function Home() {
             <GroundTruth
               initialValue={groundTruth}
               onSave={setGroundTruth}
+              findings={findings}
             />
           )}
           </div>

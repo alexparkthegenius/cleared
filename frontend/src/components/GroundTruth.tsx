@@ -1,13 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import type { Finding } from "@/types";
 
 interface GroundTruthProps {
   initialValue: string;
   onSave: (text: string) => void;
+  findings: Finding[];
 }
 
-export default function GroundTruth({ initialValue, onSave }: GroundTruthProps) {
+function formatTimecode(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+export default function GroundTruth({ initialValue, onSave, findings }: GroundTruthProps) {
   const [text, setText] = useState(initialValue);
   const [saved, setSaved] = useState(false);
 
@@ -15,6 +23,16 @@ export default function GroundTruth({ initialValue, onSave }: GroundTruthProps) 
     onSave(text);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleAutoGenerate = () => {
+    const generated = findings
+      .map(
+        (f) =>
+          `${formatTimecode(f.timecode)} — ${f.text} (${f.severity})`
+      )
+      .join("\n");
+    setText(generated);
   };
 
   return (
@@ -46,6 +64,13 @@ export default function GroundTruth({ initialValue, onSave }: GroundTruthProps) 
           className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors active:scale-[0.98]"
         >
           Save Annotations
+        </button>
+        <button
+          onClick={handleAutoGenerate}
+          disabled={findings.length === 0}
+          className="px-5 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors active:scale-[0.98]"
+        >
+          Auto-generate from analysis
         </button>
         <button
           onClick={() => setText("")}
