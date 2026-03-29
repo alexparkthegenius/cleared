@@ -372,43 +372,45 @@ TIMESTAMP RULES:
 Format: [MM:SS] asset type — description — Clearance needed: YES/MAYBE/NO
 """ if include_rights else ""
 
-    return f"""You are a compliance reviewer. Analyze this video for broadcast/distribution compliance.
+    return f"""You are a senior compliance reviewer. You MUST ONLY flag violations that match the specific rules listed below. Do NOT invent, infer, or speculate about violations not covered by these rules. If you are not confident a violation exists, do NOT report it. Only report what you can directly observe in the video.
+
+IMPORTANT CONSTRAINTS:
+- Only flag items that clearly violate a rule listed below
+- Confidence must reflect how certain you are: use 30-50 for uncertain, 50-70 for likely, 70-90 for clear, 90+ only for unambiguous
+- If a category has no violations, write: NOT DETECTED
+- Do NOT flag normal, compliant content
+- Do NOT flag things that "could potentially" be an issue — only flag what IS an issue
+- ALL timestamps MUST be the ACTUAL video playback time (MM:SS) where the item appears. Do NOT use sequential numbering like 00:00, 00:01, 00:02. Use real timecodes from the video timeline.
 
 TARGET PLATFORMS: {platforms_text}
 
-Reply ONLY in the structured format below. Do NOT write paragraphs or summaries until SECTION 6. List ALL items you find — be thorough.
+RULES TO CHECK ({ruleset_name}):
+{rules_text}
+
+AUDIO RULES TO CHECK:
+{audio_text}
+
+FORMAT — use this exact structure for every finding:
 
 SECTION 1 - CONTENT FLAGS
-Check these rules:
-{rules_text}
-Audio checks:
-{audio_text}
-For each violation found, write one line:
-[MM:SS] description — rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
-If none found, write: NOT DETECTED
+For each violation of the rules above:
+[MM:SS] Description of exactly what is visible/audible — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
 
 SECTION 2 - AUDIO FLAGS
-[MM:SS] description — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
-If none found, write: NOT DETECTED
+For each audio violation:
+[MM:SS] Description of audio content — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
 
-SECTION 3 - RIGHTS & CLEARANCES
-List EVERY item requiring clearance with the REAL timecode where it first appears:
-[MM:SS] Brand logos, trademarks — description — Clearance needed: YES/NO
-[MM:SS] Identifiable talent — description — Clearance needed: YES/NO
-[MM:SS] Artwork, sculptures — description — Clearance needed: YES/NO
-[MM:SS] Music, sound effects — description — Clearance needed: YES/NO
-[MM:SS] Architecture, set designs — description — Clearance needed: YES/NO
-The [MM:SS] must be the actual playback time. Do NOT use [00:00] for everything.
+{rights_section}
 
 SECTION 4 - PLATFORM SUITABILITY
-{platforms_text}
-For each: PLATFORM: APPROVED/FLAGGED — reason [MM:SS]
+For each platform in [{platforms_text}]:
+[platform]: APPROVED / FLAGGED / REJECTED — reason [timestamps if relevant]
 
 SECTION 5 - REGULATORY REVIEW
 {jurisdiction_text}
-For each: JURISDICTION: COMPLIANT/FLAG — rule — evidence [MM:SS]
+For each jurisdiction: COMPLIANT / FLAG — specific rule — evidence
 
 SECTION 6 - OVERALL
 APPROVED FOR DISTRIBUTION / NEEDS REVIEW / REJECTED
-Risk: CRITICAL/HIGH/MEDIUM/LOW
-One sentence summary."""
+Risk: CRITICAL / HIGH / MEDIUM / LOW
+One paragraph summary for client."""
