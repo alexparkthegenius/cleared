@@ -57,6 +57,10 @@ export default function Home() {
   // Ground truth
   const [groundTruth, setGroundTruth] = useState("");
 
+  // Analysis config (stored for report export)
+  const [lastPlatforms, setLastPlatforms] = useState<Platform[]>([]);
+  const [lastJurisdictions, setLastJurisdictions] = useState<Jurisdiction[]>([]);
+
   // Video file + S3 state
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [s3Uri, setS3Uri] = useState<string | null>(null);
@@ -139,6 +143,8 @@ export default function Home() {
     }) => {
       setIsAnalyzing(true);
       setActiveTab("compliance");
+      setLastPlatforms(config.platforms);
+      setLastJurisdictions(config.jurisdictions);
 
       // Wait for upload if still in progress
       if (isUploading) {
@@ -379,7 +385,18 @@ export default function Home() {
             />
           )}
           {activeTab === "approve" && (
-            <ExportPanel onExport={handleExport} isExporting={isExporting} findings={findings} />
+            <ExportPanel
+              onExport={handleExport}
+              isExporting={isExporting}
+              findings={findings}
+              rightsEntries={rightsEntries}
+              riskScore={riskScore}
+              riskExplanation={riskExplanation}
+              videoLabel={videoFile?.name || videoUrl || ""}
+              platforms={lastPlatforms}
+              jurisdictions={lastJurisdictions}
+              ruleset="Broadcast Standards"
+            />
           )}
           {activeTab === "ground-truth" && (
             <GroundTruth

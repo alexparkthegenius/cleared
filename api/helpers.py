@@ -42,6 +42,70 @@ def _estimate_confidence(severity: str, description: str = "") -> int:
     return base
 
 
+# ── Text cleaning ─────────────────────────────────────────────
+
+
+def clean_finding_text(text: str) -> str:
+    """Strip raw Pegasus formatting cruft from a finding's text.
+
+    Removes:
+    - Trailing '— Severity: CRITICAL/MAJOR/MINOR' suffixes
+    - Trailing '— Confidence: N' suffixes
+    - Trailing '— Rule violated: ...' suffixes
+    - Leading '[MM:SS]' timestamps (already in timestamp_seconds)
+    - 'Clearance needed: YES/MAYBE/NO'
+    - Double spaces / stray dashes
+    """
+    s = text
+    # Strip severity suffix
+    s = re.sub(r'\s*—?\s*Severity:\s*(CRITICAL|MAJOR|MINOR)\b', '', s, flags=re.IGNORECASE)
+    # Strip confidence suffix
+    s = re.sub(r'\s*—?\s*Confidence:\s*\d+', '', s, flags=re.IGNORECASE)
+    # Strip rule-violated suffix
+    s = re.sub(r'\s*—?\s*Rule violated:\s*[^—]*$', '', s, flags=re.IGNORECASE)
+    # Strip leading timestamp [MM:SS] or [HH:MM:SS] (with optional range)
+    s = re.sub(r'^\s*\[[\d:]+(?:\s*-\s*[\d:]+)?\]\s*', '', s)
+    # Strip clearance-needed tag
+    s = re.sub(r'\s*—?\s*Clearance needed:\s*(YES|MAYBE|NO)\b', '', s, flags=re.IGNORECASE)
+    # Clean double dashes / spaces
+    s = re.sub(r'\s*—\s*$', '', s)          # trailing dash
+    s = re.sub(r'—\s*—', '—', s)            # double dashes
+    s = re.sub(r'  +', ' ', s)              # double spaces
+    return s.strip()
+
+
+def finding_summary(finding: dict) -> str:
+    """Generate a concise human-readable one-liner for a finding.
+
+    Uses severity + rule + text context to produce something like:
+      'Alcohol consumption visible — moderate risk for pre-watershed broadcast'
+      'Brand logo (Coca-Cola) requires clearance — visible throughout'
+    """
+    text = finding.get("text", "")
+    severity = finding.get("severity", "MINOR")
+    rule = finding.get("rule", "")
+    source = finding.get("source", "compliance")
+
+    # Trim text to core description (first clause before a long dash chain)
+    core = re.split(r'\s*—\s*', text)[0].strip() if text else ""
+    if not core:
+        core = rule or "Finding"
+
+    # Risk phrase based on severity
+    risk_map = {"CRITICAL": "high risk", "MAJOR": "moderate risk", "MINOR": "low risk"}
+    risk = risk_map.get(severity, "flagged")
+
+    # Context suffix from rule/source
+    if source == "rights":
+        suffix = "requires clearance"
+    elif rule and rule not in ("Content flag",):
+        suffix = rule.lower()
+    else:
+        suffix = "content flag"
+
+    return f"{core} — {risk}, {suffix}"
+
+
 # ── Public API ────────────────────────────────────────────────
 
 
@@ -92,7 +156,7 @@ def parse_findings(report: str) -> list[dict]:
                         confidence = min(int(conf_match.group(1)), 100)
 
             parts = [p for p in [ts_str, category, description, severity] if p]
-            text = " — ".join(parts)
+            text = clean_finding_text(" — ".join(parts))
             if not confidence:
                 confidence = _estimate_confidence(severity, description)
             findings.append({
@@ -138,7 +202,7 @@ def parse_findings(report: str) -> list[dict]:
                 rule = "Artwork clearance"
 
             findings.append({
-                "text": clean,
+                "text": clean_finding_text(clean),
                 "severity": sev,
                 "confidence": confidence,
                 "source": "compliance",
@@ -206,7 +270,7 @@ def parse_rights_from_report(report: str) -> tuple[list[dict], list[dict]]:
 
             # unified finding (same format as compliance findings)
             rights_findings.append({
-                "text": f"{ts_str} {rest}".strip(),
+                "text": clean_finding_text(f"{ts_str} {rest}".strip()),
                 "severity": severity,
                 "confidence": 75 if needs_clearance else 60,
                 "source": "rights",

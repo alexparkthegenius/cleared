@@ -6,6 +6,7 @@ Run with:
 """
 
 import os
+import re
 import time
 import uuid
 import logging
@@ -36,6 +37,7 @@ from helpers import (
     finding_severity,
     finding_confidence,
     parse_timestamp_seconds,
+    finding_summary,
 )
 
 # ── Logging ───────────────────────────────────────────────────
@@ -130,6 +132,9 @@ class FindingOut(BaseModel):
     rule: str
     timestamp_seconds: int = 0
     asset_type: str | None = None
+    platforms_flagged: list[str] = []
+    jurisdictions_flagged: list[str] = []
+    summary: str = ""
 
 
 class AnalyzeResponse(BaseModel):
@@ -361,6 +366,126 @@ async def analyze_video(req: AnalyzeRequest):
         log.exception(f"Failed to parse Pegasus response: report_length={len(report_data)}")
         raise HTTPException(status_code=500, detail="Failed to parse analysis results.")
 
+    # ── Deduplicate findings ────────────────────────────────────
+    # Platform findings look like "YouTube: FLAGGED — tobacco use [00:49]"
+    # Jurisdiction findings look like "OFCOM: FLAG — tobacco use [00:49]"
+    # We merge these into the parent content finding as tags.
+    try:
+        _PLATFORM_NAMES = {p for p in PLATFORMS if p != "Custom"}
+        _JURISDICTION_NAMES = {j for j in JURISDICTIONS if j != "None"}
+        # Also match short jurisdiction prefixes (e.g. "OFCOM", "FCC", "GDPR")
+        _JURISDICTION_SHORTS = {j.split(" (")[0] for j in _JURISDICTION_NAMES if " (" in j}
+
+        _PLATFORM_RE = re.compile(
+            r'^(' + '|'.join(re.escape(p) for p in sorted(_PLATFORM_NAMES, key=len, reverse=True)) + r')\s*:\s*(FLAGGED|APPROVED|REJECTED)',
+            re.IGNORECASE,
+        )
+        _JURISDICTION_RE = re.compile(
+            r'^(' + '|'.join(re.escape(j) for j in sorted(_JURISDICTION_NAMES | _JURISDICTION_SHORTS, key=len, reverse=True)) + r')\s*:\s*(FLAG|COMPLIANT)',
+            re.IGNORECASE,
+        )
+
+        content_findings = []
+        platform_findings = []
+        jurisdiction_findings = []
+
+        for f in all_findings:
+            txt = f.get("text", "")
+            if _PLATFORM_RE.match(txt):
+                platform_findings.append(f)
+            elif _JURISDICTION_RE.match(txt):
+                jurisdiction_findings.append(f)
+            else:
+                content_findings.append(f)
+
+        # For each platform/jurisdiction finding, try to attach it to a content finding
+        # by matching timestamp or shared violation keywords
+        for cf in content_findings:
+            cf.setdefault("_platforms_flagged", [])
+            cf.setdefault("_jurisdictions_flagged", [])
+            cf_ts = parse_timestamp_seconds(cf)
+            cf_text_lower = cf.get("text", "").lower()
+
+            for pf in platform_findings:
+                pf_ts = parse_timestamp_seconds(pf)
+                pf_text = pf.get("text", "")
+                m = _PLATFORM_RE.match(pf_text)
+                if not m:
+                    continue
+                platform_name = m.group(1)
+                status = m.group(2).upper()
+                # Match by timestamp or by shared keywords
+                remainder = pf_text[m.end():].lower()
+                keywords_overlap = any(
+                    w in cf_text_lower
+                    for w in remainder.split()
+                    if len(w) > 3 and w not in ("the", "and", "for", "with", "from", "that", "this")
+                )
+                if (cf_ts > 0 and pf_ts > 0 and abs(cf_ts - pf_ts) <= 5) or keywords_overlap:
+                    label = f"{platform_name}: {status}"
+                    if label not in cf["_platforms_flagged"]:
+                        cf["_platforms_flagged"].append(label)
+
+            for jf in jurisdiction_findings:
+                jf_ts = parse_timestamp_seconds(jf)
+                jf_text = jf.get("text", "")
+                m = _JURISDICTION_RE.match(jf_text)
+                if not m:
+                    continue
+                jurisdiction_name = m.group(1)
+                status = m.group(2).upper()
+                # Try to find full name
+                full_name = jurisdiction_name
+                for jn in _JURISDICTION_NAMES:
+                    if jn.startswith(jurisdiction_name):
+                        full_name = jn
+                        break
+                remainder = jf_text[m.end():].lower()
+                keywords_overlap = any(
+                    w in cf_text_lower
+                    for w in remainder.split()
+                    if len(w) > 3 and w not in ("the", "and", "for", "with", "from", "that", "this")
+                )
+                if (cf_ts > 0 and jf_ts > 0 and abs(cf_ts - jf_ts) <= 5) or keywords_overlap:
+                    label = f"{full_name}: {status}"
+                    if label not in cf["_jurisdictions_flagged"]:
+                        cf["_jurisdictions_flagged"].append(label)
+
+        # If any platform/jurisdiction findings couldn't be matched, keep them as standalone
+        matched_platforms = set()
+        matched_jurisdictions = set()
+        for cf in content_findings:
+            for lbl in cf.get("_platforms_flagged", []):
+                matched_platforms.add(lbl)
+            for lbl in cf.get("_jurisdictions_flagged", []):
+                matched_jurisdictions.add(lbl)
+
+        # Unmatched platform/jurisdiction findings become standalone content findings
+        for pf in platform_findings:
+            m = _PLATFORM_RE.match(pf.get("text", ""))
+            if m:
+                label = f"{m.group(1)}: {m.group(2).upper()}"
+                if label not in matched_platforms:
+                    content_findings.append(pf)
+
+        for jf in jurisdiction_findings:
+            m = _JURISDICTION_RE.match(jf.get("text", ""))
+            if m:
+                full_name = m.group(1)
+                for jn in _JURISDICTION_NAMES:
+                    if jn.startswith(full_name):
+                        full_name = jn
+                        break
+                label = f"{full_name}: {m.group(2).upper()}"
+                if label not in matched_jurisdictions:
+                    content_findings.append(jf)
+
+        all_findings = content_findings
+        log.info(f"Deduplication: {len(compliance_findings) + len(rights_findings)} -> {len(all_findings)} findings "
+                 f"({len(platform_findings)} platform, {len(jurisdiction_findings)} jurisdiction merged)")
+    except Exception:
+        log.exception("Finding deduplication failed, using raw findings")
+
     # Compute risk score
     try:
         risk_score_val = severity_score(report_data)
@@ -393,6 +518,9 @@ async def analyze_video(req: AnalyzeRequest):
                 rule=f.get("rule", "Content flag"),
                 timestamp_seconds=parse_timestamp_seconds(f),
                 asset_type=f.get("asset_type"),
+                platforms_flagged=f.get("_platforms_flagged", []),
+                jurisdictions_flagged=f.get("_jurisdictions_flagged", []),
+                summary=finding_summary(f),
             ))
         except Exception:
             log.exception(f"Failed to serialize finding {i}: {f}")
