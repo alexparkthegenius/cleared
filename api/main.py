@@ -382,12 +382,12 @@ async def analyze_video(req: AnalyzeRequest):
                             log.error(f"Failed to create TwelveLabs index: {create_resp.status_code} {create_resp.text[:200]}")
 
                     if tl_index_id:
-                        # Upload video via URL
-                        async with httpx.AsyncClient(timeout=30.0) as tl_client:
+                        # Upload video via URL (multipart/form-data required)
+                        async with httpx.AsyncClient(timeout=60.0) as tl_client:
                             upload_resp = await tl_client.post(
                                 "https://api.twelvelabs.io/v1.3/tasks",
-                                headers=tl_json_headers,
-                                json={"index_id": tl_index_id, "url": presigned_url},
+                                headers=tl_auth_headers,
+                                data={"index_id": tl_index_id, "video_url": presigned_url},
                             )
                         if upload_resp.status_code not in (200, 201):
                             log.error(f"TwelveLabs upload failed: {upload_resp.status_code} {upload_resp.text[:200]}")
