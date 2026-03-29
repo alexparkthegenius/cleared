@@ -398,7 +398,7 @@ export default function Sidebar({
               <textarea
                 value={customRules}
                 onChange={(e) => setCustomRules(e.target.value)}
-                placeholder="Add custom compliance rules..."
+                placeholder={"e.g.\nNo visible tattoos\nNo competitor products in frame\nAll talent must have signed releases\nNo unlicensed music"}
                 rows={4}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-xs text-foreground placeholder:text-muted resize-none focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
               />
