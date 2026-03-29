@@ -524,9 +524,11 @@ async def _call_ltx_retake(
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
     if resp.status_code != 200:
-        log.error(f"LTX retake failed: status={resp.status_code}, body={resp.text[:300]}")
-        raise HTTPException(status_code=502, detail=f"LTX API error: {resp.status_code}")
-    log.info(f"LTX retake success: received {len(resp.content)} bytes")
+        error_body = resp.text[:500]
+        log.error(f"LTX retake failed: status={resp.status_code}, body={error_body}")
+        raise HTTPException(status_code=502, detail=f"LTX retake error ({resp.status_code}): {error_body}")
+    content_type = resp.headers.get("content-type", "")
+    log.info(f"LTX retake success: {len(resp.content)} bytes, content-type={content_type}")
     return resp.content
 
 
@@ -546,9 +548,11 @@ async def _call_ltx_text_to_video(prompt: str, duration: float) -> bytes:
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
     if resp.status_code != 200:
-        log.error(f"LTX text-to-video failed: status={resp.status_code}, body={resp.text[:300]}")
-        raise HTTPException(status_code=502, detail=f"LTX API error: {resp.status_code}")
-    log.info(f"LTX text-to-video success: received {len(resp.content)} bytes")
+        error_body = resp.text[:500]
+        log.error(f"LTX text-to-video failed: status={resp.status_code}, body={error_body}")
+        raise HTTPException(status_code=502, detail=f"LTX t2v error ({resp.status_code}): {error_body}")
+    content_type = resp.headers.get("content-type", "")
+    log.info(f"LTX text-to-video success: {len(resp.content)} bytes, content-type={content_type}")
     return resp.content
 
 
