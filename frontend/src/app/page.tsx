@@ -12,6 +12,7 @@ import type {
   Jurisdiction,
 } from "@/types";
 import { MOCK_FINDINGS, MOCK_RIGHTS } from "@/lib/mockData";
+import { uploadVideo, analyzeVideo } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 import VideoPlayer from "@/components/VideoPlayer";
 import ViolationsPanel from "@/components/ViolationsPanel";
@@ -55,10 +56,27 @@ export default function Home() {
   // Ground truth
   const [groundTruth, setGroundTruth] = useState("");
 
+  // Video file + S3 state
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [s3Uri, setS3Uri] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   // Handlers
-  const handleFileSelect = useCallback((file: File) => {
+  const handleFileSelect = useCallback(async (file: File) => {
     const url = URL.createObjectURL(file);
     setVideoUrl(url);
+    setVideoFile(file);
+    setUploadError(null);
+
+    // Upload to S3 in background
+    try {
+      const result = await uploadVideo(file);
+      setS3Uri(result.s3_uri);
+      console.log("Uploaded to S3:", result.s3_uri);
+    } catch (err) {
+      console.error("Upload failed:", err);
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    }
   }, []);
 
   const handleSeek = useCallback((time: number) => {
@@ -66,7 +84,7 @@ export default function Home() {
   }, []);
 
   const handleRunCheck = useCallback(
-    async (_config: {
+    async (config: {
       source: VideoSource;
       platforms: Platform[];
       jurisdictions: Jurisdiction[];
@@ -75,20 +93,71 @@ export default function Home() {
       setIsAnalyzing(true);
       setActiveTab("compliance");
 
-      // Simulate API call with mock data
-      await new Promise((resolve) => setTimeout(resolve, 2200));
+      // If no S3 URI yet, fall back to mock data
+      if (!s3Uri) {
+        console.warn("No S3 URI — using mock data");
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        setFindings(MOCK_FINDINGS);
+        setRightsEntries(MOCK_RIGHTS);
+        setRiskScore(72);
+        setRiskExplanation("Mock analysis — upload a video for real results.");
+        setIsAnalyzing(false);
+        return;
+      }
 
-      setFindings(MOCK_FINDINGS);
-      setRightsEntries(MOCK_RIGHTS);
-      setRiskScore(72);
-      setRiskExplanation(
-        "High risk due to 2 critical findings including unblurred minor and age-rating violation. " +
-          "2 major issues with undisclosed product placement and potential copyright infringement. " +
-          "Recommend immediate remediation before distribution."
-      );
+      try {
+        const result = await analyzeVideo({
+          s3_uri: s3Uri,
+          platforms: config.platforms,
+          jurisdictions: config.jurisdictions,
+          custom_rules: config.customRules || undefined,
+          ruleset: "Broadcast Standards",
+          include_rights: true,
+        });
+
+        // Map API findings to frontend Finding type
+        const mappedFindings: Finding[] = (result.findings || []).map((f: Record<string, unknown>, i: number) => ({
+          id: `f${i}`,
+          timecode: typeof f.timecode === "number" ? f.timecode : (f.timestamp_seconds as number) || 0,
+          text: (f.text as string) || (f.description as string) || "",
+          severity: ((f.severity as string) || "MINOR").toLowerCase() as Finding["severity"],
+          confidence: (f.confidence as number) || 50,
+          rule: (f.rule as string) || "",
+          source: (f.source as string) || "compliance",
+          decision: "pending" as Decision,
+          remediation: "none" as Remediation,
+        }));
+
+        setFindings(mappedFindings);
+        setRiskScore(result.risk_score || 0);
+        setRiskExplanation(result.risk_explanation || "");
+
+        if (result.rights_entries && result.rights_entries.length > 0) {
+          const mappedRights: RightsEntry[] = result.rights_entries.map((r: Record<string, unknown>, i: number) => ({
+            id: `r${i}`,
+            asset: (r.asset as string) || "",
+            type: (r.type as string) || "other",
+            status: "pending" as RightsEntry["status"],
+            expiry_date: (r.expiry_date as string) || "",
+            territory: (r.territory as string) || "",
+            notes: (r.notes as string) || "",
+            source: "auto-detected",
+            library: "",
+          }));
+          setRightsEntries(mappedRights);
+        }
+      } catch (err) {
+        console.error("Analysis failed:", err);
+        // Fall back to mock on error
+        setFindings(MOCK_FINDINGS);
+        setRightsEntries(MOCK_RIGHTS);
+        setRiskScore(72);
+        setRiskExplanation("Analysis failed — showing mock data. Error: " + (err instanceof Error ? err.message : String(err)));
+      }
+
       setIsAnalyzing(false);
     },
-    []
+    [s3Uri]
   );
 
   const handleDecision = useCallback(
