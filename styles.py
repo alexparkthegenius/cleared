@@ -532,6 +532,35 @@ section[data-testid="stSidebar"] .stCaption p {
 .stApp .stTabs { margin-top: 0 !important; }
 .stApp [data-testid="stCustomComponentV1"] > div { padding-bottom: 0 !important; }
 
+/* ── STREAMLIT TOP BAR (Share/Deploy) ── */
+.stApp header[data-testid="stHeader"],
+.stApp [data-testid="stHeader"],
+.stApp [data-testid="stToolbar"],
+.stApp header {
+    height: 1.5rem !important;
+    min-height: 1.5rem !important;
+    max-height: 1.5rem !important;
+    padding: 0 !important;
+    background: var(--bg-primary) !important;
+}
+.stApp header[data-testid="stHeader"] *,
+.stApp [data-testid="stHeader"] *,
+.stApp [data-testid="stToolbar"] *,
+.stApp [data-testid="stToolbar"] button,
+.stApp [data-testid="stToolbar"] a,
+.stApp [data-testid="stToolbar"] span,
+.stApp header button, .stApp header a, .stApp header span {
+    color: #e0e0e0 !important;
+    fill: #e0e0e0 !important;
+    opacity: 0.4 !important;
+    font-size: 0.6rem !important;
+}
+.stApp [data-testid="stToolbar"] button:hover,
+.stApp [data-testid="stToolbar"] a:hover,
+.stApp header button:hover, .stApp header a:hover {
+    opacity: 0.8 !important;
+}
+
 /* ── SCROLLABLE TABS CONTAINER ── */
 .stApp section.main > div.block-container { padding-top: 0 !important; max-width: 100% !important; }
 
