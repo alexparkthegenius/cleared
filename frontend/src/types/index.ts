@@ -36,6 +36,7 @@ export interface AnalysisResult {
   risk_explanation: string;
   report: string;
   duration: number;
+  rights_entries?: any[];
 }
 
 export type Platform =

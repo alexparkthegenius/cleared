@@ -149,11 +149,10 @@ export default function VideoPlayer({
             findings.map((f) => (
               <div
                 key={f.id}
-                className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full ring-1 ring-black/30 cursor-pointer hover:scale-150 transition-transform z-10"
+                className="absolute top-1/2 w-2 h-2 rounded-full ring-1 ring-black/30 cursor-pointer -translate-x-1/2 -translate-y-1/2 hover:scale-150 transition-transform z-10"
                 style={{
                   left: `${(f.timecode / duration) * 100}%`,
                   backgroundColor: severityColor(f.severity),
-                  transform: "translate(-50%, -50%)",
                 }}
                 title={`${formatTime(f.timecode)} — ${f.severity}: ${f.rule}`}
                 onClick={(e) => {

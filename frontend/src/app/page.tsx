@@ -63,14 +63,17 @@ export default function Home() {
   const s3UriRef = useRef<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const uploadDoneRef = useRef(false);
 
   // Handlers
   const handleFileSelect = useCallback(async (file: File) => {
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
     const url = URL.createObjectURL(file);
     setVideoUrl(url);
     setVideoFile(file);
     setUploadError(null);
     setIsUploading(true);
+    uploadDoneRef.current = false;
 
     // Clear previous analysis state
     setFindings([]);
@@ -91,8 +94,9 @@ export default function Home() {
       setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setIsUploading(false);
+      uploadDoneRef.current = true;
     }
-  }, []);
+  }, [videoUrl]);
 
   const handleSeek = useCallback((time: number) => {
     setCurrentTime(time);
@@ -114,7 +118,7 @@ export default function Home() {
         console.log("Waiting for upload to complete...");
         await new Promise<void>((resolve) => {
           const check = setInterval(() => {
-            if (s3UriRef.current) {
+            if (s3UriRef.current || uploadDoneRef.current) {
               clearInterval(check);
               resolve();
             }
