@@ -148,7 +148,26 @@ section[data-testid="stSidebar"] {
     border-right: 1px solid var(--border-light) !important;
 }
 section[data-testid="stSidebar"] > div:first-child {
-    padding-top: 1rem !important;
+    padding-top: 0.25rem !important;
+}
+/* kill the collapse arrow gap */
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapsedControl"],
+section[data-testid="stSidebar"] button[kind="header"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="collapsedControl"] {
+    position: absolute !important;
+    top: 0.25rem !important;
+    right: 0.25rem !important;
+    z-index: 999 !important;
+    padding: 0.25rem !important;
+    margin: 0 !important;
+}
+/* remove default top padding/margin that creates the dead space */
+section[data-testid="stSidebar"] .block-container,
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    padding-top: 0.25rem !important;
+    margin-top: 0 !important;
 }
 section[data-testid="stSidebar"] .stMarkdown p {
     color: var(--text-tertiary) !important;
