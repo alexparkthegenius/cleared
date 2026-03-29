@@ -333,82 +333,120 @@ async def analyze_video(req: AnalyzeRequest):
 
     if TWELVELABS_API_KEY:
         try:
+            import asyncio
             log.info("Attempting TwelveLabs direct analysis (better temporal accuracy)...")
-            import httpx as _httpx
 
-            tl_headers = {"x-api-key": TWELVELABS_API_KEY, "Content-Type": "application/json"}
+            tl_auth_headers = {"x-api-key": TWELVELABS_API_KEY}
+            tl_json_headers = {"x-api-key": TWELVELABS_API_KEY, "Content-Type": "application/json"}
 
-            # If source is TwelveLabs, use the video ID directly
             tl_video_id = None
             tl_index_id = None
+
+            # If source is TwelveLabs, use the video ID directly
             if req.s3_uri.startswith("twelvelabs://"):
-                parts = req.s3_uri.replace("twelvelabs://", "").split("/")
-                tl_index_id, tl_video_id = parts[0], parts[1]
-                log.info(f"Using existing TwelveLabs video: index={tl_index_id}, video={tl_video_id}")
+                parts = req.s3_uri.replace("twelvelabs://", "").split("/", 2)
+                if len(parts) >= 2:
+                    tl_index_id, tl_video_id = parts[0], parts[1]
+                    log.info(f"Using existing TwelveLabs video: index={tl_index_id}, video={tl_video_id}")
+                else:
+                    log.error(f"Invalid twelvelabs:// URI format: {req.s3_uri}")
             else:
-                # For S3 uploads, find or create an index and upload the video
-                # First, get presigned URL for the S3 video
+                # For S3 uploads: get presigned URL, find/create index, upload, wait
                 presigned_url = get_s3_presigned_url(analysis_s3_uri)
-                if presigned_url:
-                    # Find existing index or use default
-                    idx_resp = _httpx.get("https://api.twelvelabs.io/v1.3/indexes",
-                                         headers={"x-api-key": TWELVELABS_API_KEY}, timeout=15.0)
+                if not presigned_url:
+                    log.warning("Could not generate presigned URL for TwelveLabs upload")
+                else:
+                    # Find existing index
+                    async with httpx.AsyncClient(timeout=15.0) as tl_client:
+                        idx_resp = await tl_client.get(
+                            "https://api.twelvelabs.io/v1.3/indexes",
+                            headers=tl_auth_headers,
+                        )
                     indexes = idx_resp.json().get("data", [])
                     if indexes:
                         tl_index_id = indexes[0]["_id"]
                         log.info(f"Using existing TwelveLabs index: {tl_index_id}")
                     else:
                         # Create index
-                        create_resp = _httpx.post("https://api.twelvelabs.io/v1.3/indexes",
-                            headers=tl_headers,
-                            json={"index_name": "cleared-compliance", "models": [{"model_name": "marengo2.7", "options": ["visual", "audio"]}]},
-                            timeout=15.0)
-                        tl_index_id = create_resp.json().get("_id")
-                        log.info(f"Created TwelveLabs index: {tl_index_id}")
+                        async with httpx.AsyncClient(timeout=15.0) as tl_client:
+                            create_resp = await tl_client.post(
+                                "https://api.twelvelabs.io/v1.3/indexes",
+                                headers=tl_json_headers,
+                                json={"index_name": "cleared-compliance",
+                                      "models": [{"model_name": "marengo2.7", "options": ["visual", "audio"]}]},
+                            )
+                        if create_resp.status_code == 200 or create_resp.status_code == 201:
+                            tl_index_id = create_resp.json().get("_id")
+                            log.info(f"Created TwelveLabs index: {tl_index_id}")
+                        else:
+                            log.error(f"Failed to create TwelveLabs index: {create_resp.status_code} {create_resp.text[:200]}")
 
                     if tl_index_id:
                         # Upload video via URL
-                        upload_resp = _httpx.post(f"https://api.twelvelabs.io/v1.3/tasks",
-                            headers=tl_headers,
-                            json={"index_id": tl_index_id, "url": presigned_url},
-                            timeout=30.0)
-                        task_data = upload_resp.json()
-                        task_id = task_data.get("_id")
-                        tl_video_id = task_data.get("video_id")
-                        log.info(f"TwelveLabs upload task: {task_id}, video: {tl_video_id}")
+                        async with httpx.AsyncClient(timeout=30.0) as tl_client:
+                            upload_resp = await tl_client.post(
+                                "https://api.twelvelabs.io/v1.3/tasks",
+                                headers=tl_json_headers,
+                                json={"index_id": tl_index_id, "url": presigned_url},
+                            )
+                        if upload_resp.status_code not in (200, 201):
+                            log.error(f"TwelveLabs upload failed: {upload_resp.status_code} {upload_resp.text[:200]}")
+                        else:
+                            task_data = upload_resp.json()
+                            task_id = task_data.get("_id")
+                            tl_video_id = task_data.get("video_id")
+                            log.info(f"TwelveLabs upload task: {task_id}, video: {tl_video_id}")
 
-                        # Wait for indexing (up to 120s)
-                        if task_id:
-                            for _ in range(60):
-                                status_resp = _httpx.get(f"https://api.twelvelabs.io/v1.3/tasks/{task_id}",
-                                    headers={"x-api-key": TWELVELABS_API_KEY}, timeout=10.0)
-                                status = status_resp.json().get("status")
-                                if status == "ready":
-                                    log.info("TwelveLabs indexing complete")
-                                    break
-                                elif status == "failed":
-                                    log.error("TwelveLabs indexing failed")
+                            # Wait for indexing (up to 120s)
+                            if task_id:
+                                for attempt in range(60):
+                                    async with httpx.AsyncClient(timeout=10.0) as tl_client:
+                                        status_resp = await tl_client.get(
+                                            f"https://api.twelvelabs.io/v1.3/tasks/{task_id}",
+                                            headers=tl_auth_headers,
+                                        )
+                                    status = status_resp.json().get("status")
+                                    if status == "ready":
+                                        log.info(f"TwelveLabs indexing complete (attempt {attempt+1})")
+                                        break
+                                    elif status == "failed":
+                                        log.error(f"TwelveLabs indexing failed: {status_resp.json()}")
+                                        tl_video_id = None
+                                        break
+                                    await asyncio.sleep(2)
+                                else:
+                                    log.error("TwelveLabs indexing timed out after 120s")
                                     tl_video_id = None
-                                    break
-                                import asyncio
-                                await asyncio.sleep(2)
 
-            # Now run analysis via TwelveLabs
+            # Run analysis via TwelveLabs
             if tl_video_id and tl_index_id:
-                analyze_resp = _httpx.post("https://api.twelvelabs.io/v1.3/analyze",
-                    headers=tl_headers,
-                    json={
-                        "video_id": tl_video_id,
-                        "prompt": prompt,
-                    },
-                    timeout=300.0)
+                log.info(f"Running TwelveLabs analyze: index={tl_index_id}, video={tl_video_id}")
+                async with httpx.AsyncClient(timeout=300.0) as tl_client:
+                    analyze_resp = await tl_client.post(
+                        "https://api.twelvelabs.io/v1.3/analyze",
+                        headers=tl_json_headers,
+                        json={
+                            "video_id": tl_video_id,
+                            "prompt": prompt,
+                            "stream": False,
+                        },
+                    )
                 if analyze_resp.status_code == 200:
                     tl_result = analyze_resp.json()
-                    report_data = tl_result.get("data", tl_result.get("text", str(tl_result)))
+                    # Extract text from response — TwelveLabs returns {data: "text..."} or {text: "..."}
+                    report_data = tl_result.get("data", "")
+                    if not isinstance(report_data, str):
+                        report_data = tl_result.get("text", "")
+                    if not report_data:
+                        # Try extracting from nested structure
+                        report_data = json.dumps(tl_result, indent=2) if tl_result else ""
+                        log.warning(f"TwelveLabs response had unexpected structure, serialized: {report_data[:200]}")
                     analysis_method = "twelvelabs-direct"
                     log.info(f"TwelveLabs direct analysis success: {len(report_data)} chars")
                 else:
-                    log.warning(f"TwelveLabs analyze failed ({analyze_resp.status_code}): {analyze_resp.text[:200]}")
+                    log.warning(f"TwelveLabs analyze failed ({analyze_resp.status_code}): {analyze_resp.text[:300]}")
+            else:
+                log.info("TwelveLabs video not available, will fall back to Bedrock")
         except Exception:
             log.exception("TwelveLabs direct analysis failed, falling back to Bedrock")
 
