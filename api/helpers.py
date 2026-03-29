@@ -372,43 +372,43 @@ TIMESTAMP RULES:
 Format: [MM:SS] asset type — description — Clearance needed: YES/MAYBE/NO
 """ if include_rights else ""
 
-    return f"""Watch this video carefully from start to finish. You are checking it for compliance before it airs on: {platforms_text}.
+    return f"""You are a compliance reviewer. Analyze this video for broadcast/distribution compliance.
 
-It must comply with these regulations: {jurisdiction_text}
+TARGET PLATFORMS: {platforms_text}
 
-STEP 1 — STANDARDS & PRACTICES (S+P)
-Watch for these specific violations:
+Reply ONLY in the structured format below. Do NOT write paragraphs or summaries until SECTION 6. List ALL items you find — be thorough.
+
+SECTION 1 - CONTENT FLAGS
+Check these rules:
 {rules_text}
-
-Audio violations to check:
+Audio checks:
 {audio_text}
+For each violation found, write one line:
+[MM:SS] description — rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
+If none found, write: NOT DETECTED
 
-For EVERY violation you find, report it as:
-[MM:SS] What you see or hear — Which rule it violates — Severity: CRITICAL/MAJOR/MINOR — Confidence: 0-100
+SECTION 2 - AUDIO FLAGS
+[MM:SS] description — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
+If none found, write: NOT DETECTED
 
-CRITICAL = must be fixed before airing (nudity, minors at risk, hate speech)
-MAJOR = likely needs fixing (alcohol without context, unlicensed music, profanity)
-MINOR = flag for review (brand visible, talent recognition, background signage)
+SECTION 3 - RIGHTS & CLEARANCES
+List EVERY item requiring clearance with the REAL timecode where it first appears:
+[MM:SS] Brand logos, trademarks — description — Clearance needed: YES/NO
+[MM:SS] Identifiable talent — description — Clearance needed: YES/NO
+[MM:SS] Artwork, sculptures — description — Clearance needed: YES/NO
+[MM:SS] Music, sound effects — description — Clearance needed: YES/NO
+[MM:SS] Architecture, set designs — description — Clearance needed: YES/NO
+The [MM:SS] must be the actual playback time. Do NOT use [00:00] for everything.
 
-STEP 2 — RIGHTS & CLEARANCES (R+C)
-Scan the full video for anything requiring clearance:
-- Brand logos, trademarks, product packaging
-- Identifiable talent (faces clearly visible)
-- Artwork, paintings, sculptures on screen
-- Music, sound effects, jingles
-- Architectural works, set designs
-- Archive footage, news clips
+SECTION 4 - PLATFORM SUITABILITY
+{platforms_text}
+For each: PLATFORM: APPROVED/FLAGGED — reason [MM:SS]
 
-For EACH item, report the EXACT timecode where it FIRST appears:
-[MM:SS] What it is — Description — Clearance needed: YES/NO
+SECTION 5 - REGULATORY REVIEW
+{jurisdiction_text}
+For each: JURISDICTION: COMPLIANT/FLAG — rule — evidence [MM:SS]
 
-IMPORTANT: The timecode must be the real playback position. If a logo appears 30 seconds in, write [00:30]. Do NOT list everything at [00:00].
-
-STEP 3 — PLATFORM & JURISDICTION FLAGS
-For each platform ({platforms_text}), state: APPROVED or FLAGGED with reason and timecode.
-For each jurisdiction, state: COMPLIANT or FLAG with specific regulation and evidence timecode.
-
-STEP 4 — OVERALL
-State: APPROVED / NEEDS REVIEW / REJECTED
-Risk level: CRITICAL / HIGH / MEDIUM / LOW
+SECTION 6 - OVERALL
+APPROVED FOR DISTRIBUTION / NEEDS REVIEW / REJECTED
+Risk: CRITICAL/HIGH/MEDIUM/LOW
 One sentence summary."""
