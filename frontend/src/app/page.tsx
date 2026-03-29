@@ -138,13 +138,16 @@ export default function Home() {
           include_rights: true,
         });
 
+        // Debug: log raw API response
+        console.log("Raw API response:", JSON.stringify(result, null, 2));
+
         // Map API findings to frontend Finding type
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mappedFindings: Finding[] = ((result as any).findings || []).map((f: any, i: number) => ({
           id: `f${i}`,
           timecode: typeof f.timecode === "number" ? f.timecode : (f.timestamp_seconds as number) || 0,
           text: (f.text as string) || (f.description as string) || "",
-          severity: ((f.severity as string) || "MINOR").toLowerCase() as Finding["severity"],
+          severity: ((f.severity as string) || "MINOR").toUpperCase() as Finding["severity"],
           confidence: (f.confidence as number) || 50,
           rule: (f.rule as string) || "",
           source: (f.source as string) || "compliance",
