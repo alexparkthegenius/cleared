@@ -249,7 +249,7 @@ export default function Home() {
           ruleset: "Broadcast Standards",
           platforms: [],
           jurisdictions: [],
-          risk_score: analysisResult?.risk_score ?? 0,
+          risk_score: riskScore,
           deliverable_spec: config.deliverable,
           deliver_to: config.deliverTo,
           exchange_formats: config.formats,
@@ -277,7 +277,7 @@ export default function Home() {
         setIsExporting(false);
       }
     },
-    [findings, s3Uri, videoUrl, analysisResult]
+    [findings, s3Uri, videoUrl, riskScore]
   );
 
   return (
