@@ -298,7 +298,8 @@ Identify ALL of the following requiring clearance:
 - Background music, sound effects, jingles
 - Architectural works, set designs
 - News footage, archival material
-Format: [timestamp] [asset type] [description] [clearance needed: YES/MAYBE/NO]
+CRITICAL: Use the ACTUAL video timecode (MM:SS) where each item FIRST APPEARS in the video. Do NOT use sequential numbering (00:00, 00:01, 00:02). The timestamp must reflect the real playback position in the video where the asset is visible or audible.
+Format: [MM:SS] asset type — description — Clearance needed: YES/MAYBE/NO
 """ if include_rights else ""
 
     return f"""You are a senior compliance reviewer. You MUST ONLY flag violations that match the specific rules listed below. Do NOT invent, infer, or speculate about violations not covered by these rules. If you are not confident a violation exists, do NOT report it. Only report what you can directly observe in the video.
@@ -309,6 +310,7 @@ IMPORTANT CONSTRAINTS:
 - If a category has no violations, write: NOT DETECTED
 - Do NOT flag normal, compliant content
 - Do NOT flag things that "could potentially" be an issue — only flag what IS an issue
+- ALL timestamps MUST be the ACTUAL video playback time (MM:SS) where the item appears. Do NOT use sequential numbering like 00:00, 00:01, 00:02. Use real timecodes from the video timeline.
 
 TARGET PLATFORMS: {platforms_text}
 
