@@ -74,3 +74,46 @@ export async function healthCheck(): Promise<{ status: string; bedrock_available
   if (!res.ok) throw new Error("Health check failed");
   return res.json();
 }
+
+export async function regenClip(params: {
+  video_uri: string;
+  start_time: number;
+  duration: number;
+  prompt: string;
+  mode: string;
+  finding_id: string;
+}): Promise<{
+  finding_id: string;
+  options: { id: string; video_url: string; prompt: string; duration: number }[];
+}> {
+  const res = await fetch(`${BASE_URL}/api/regen`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Regen failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function regenTextToVideo(params: {
+  prompt: string;
+  duration: number;
+  finding_id: string;
+}): Promise<{
+  finding_id: string;
+  options: { id: string; video_url: string; prompt: string; duration: number }[];
+}> {
+  const res = await fetch(`${BASE_URL}/api/regen/text-to-video`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Text-to-video regen failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}

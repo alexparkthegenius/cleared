@@ -11,6 +11,7 @@ interface ComplianceFindingsProps {
   onRemediation: (id: string, remediation: Remediation) => void;
   riskScore: number | null;
   riskExplanation: string;
+  s3Uri?: string | null;
 }
 
 function riskColor(score: number): string {
@@ -33,6 +34,7 @@ export default function ComplianceFindings({
   onRemediation,
   riskScore,
   riskExplanation,
+  s3Uri,
 }: ComplianceFindingsProps) {
   const critical = findings.filter((f) => f.severity === "CRITICAL").length;
   const major = findings.filter((f) => f.severity === "MAJOR").length;
@@ -102,6 +104,7 @@ export default function ComplianceFindings({
               onDecision={onDecision}
               onRemediation={onRemediation}
               isActive={Math.abs(f.timecode - currentTime) < 3}
+              s3Uri={s3Uri}
             />
           ))}
         </div>

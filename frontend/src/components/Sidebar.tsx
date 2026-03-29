@@ -413,7 +413,7 @@ export default function Sidebar({
           onClick={() =>
             onRunCheck({ source, platforms, jurisdictions, customRules })
           }
-          disabled={isAnalyzing}
+          disabled={isAnalyzing || platforms.length === 0 || jurisdictions.length === 0}
           className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-all active:scale-[0.98]"
         >
           {isAnalyzing ? (
@@ -443,6 +443,11 @@ export default function Sidebar({
             "Run Compliance Check"
           )}
         </button>
+        {(platforms.length === 0 || jurisdictions.length === 0) && !isAnalyzing && (
+          <p className="text-[10px] text-amber-400 mt-2 text-center">
+            Select at least one platform and jurisdiction
+          </p>
+        )}
       </div>
     </aside>
   );

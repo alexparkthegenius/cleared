@@ -479,3 +479,200 @@ async def get_jurisdictions():
 async def get_audio_flags():
     """Return available audio flag options."""
     return AUDIO_FLAGS
+
+
+# ══════════════════════════════════════════════════════════════
+# LTX Video Regeneration
+# ══════════════════════════════════════════════════════════════
+
+import httpx
+
+LTX_API_KEY = os.environ.get("LTX_API_KEY", "")
+
+REGEN_MODES = {"replace_video", "replace_audio", "replace_audio_and_video"}
+
+
+class RegenOption(BaseModel):
+    id: str
+    video_url: str
+    prompt: str
+    duration: float
+
+
+class RegenRequest(BaseModel):
+    video_uri: str
+    start_time: float
+    duration: float = Field(default=3.0, ge=2.0)
+    prompt: str
+    mode: str = "replace_audio_and_video"
+    finding_id: str
+
+
+class RegenResponse(BaseModel):
+    finding_id: str
+    options: list[RegenOption]
+
+
+class TextToVideoRequest(BaseModel):
+    prompt: str
+    duration: float = Field(default=3.0, ge=2.0)
+    finding_id: str
+
+
+async def _call_ltx_retake(
+    video_uri: str,
+    prompt: str,
+    start_time: float,
+    duration: float,
+    mode: str,
+) -> bytes:
+    """Call LTX retake API and return raw MP4 bytes."""
+    url = "https://api.ltx.video/v1/retake"
+    payload = {
+        "video_uri": video_uri,
+        "prompt": prompt,
+        "start_time": start_time,
+        "duration": duration,
+        "mode": mode,
+        "model": "ltx-2-3-pro",
+    }
+    headers = {
+        "Authorization": f"Bearer {LTX_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    log.info(f"LTX retake request: prompt={prompt[:80]}..., start={start_time}, dur={duration}, mode={mode}")
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code != 200:
+        log.error(f"LTX retake failed: status={resp.status_code}, body={resp.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"LTX API error: {resp.status_code}")
+    log.info(f"LTX retake success: received {len(resp.content)} bytes")
+    return resp.content
+
+
+async def _call_ltx_text_to_video(prompt: str, duration: float) -> bytes:
+    """Call LTX text-to-video API and return raw MP4 bytes."""
+    url = "https://api.ltx.video/v1/text-to-video"
+    payload = {
+        "prompt": prompt,
+        "duration": duration,
+        "model": "ltx-2-3-pro",
+    }
+    headers = {
+        "Authorization": f"Bearer {LTX_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    log.info(f"LTX text-to-video request: prompt={prompt[:80]}..., dur={duration}")
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code != 200:
+        log.error(f"LTX text-to-video failed: status={resp.status_code}, body={resp.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"LTX API error: {resp.status_code}")
+    log.info(f"LTX text-to-video success: received {len(resp.content)} bytes")
+    return resp.content
+
+
+def _upload_regen_clip(mp4_bytes: bytes, finding_id: str) -> str:
+    """Upload regenerated MP4 to S3 and return a presigned URL."""
+    filename = f"regen/{finding_id}_{uuid.uuid4().hex[:8]}.mp4"
+    s3_uri = upload_to_s3(mp4_bytes, filename)
+    if not s3_uri:
+        raise HTTPException(status_code=500, detail="Failed to upload regen clip to S3")
+    presigned = get_s3_presigned_url(s3_uri)
+    if not presigned:
+        raise HTTPException(status_code=500, detail="Failed to generate presigned URL for regen clip")
+    log.info(f"Regen clip uploaded: s3_uri={s3_uri}")
+    return presigned
+
+
+@app.post("/api/regen", response_model=RegenResponse)
+async def regen_clip(req: RegenRequest):
+    """Generate replacement video clips using LTX-2.3."""
+    if not LTX_API_KEY:
+        log.error("LTX_API_KEY not set")
+        raise HTTPException(status_code=503, detail="LTX_API_KEY not configured")
+    if req.mode not in REGEN_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {req.mode}. Must be one of {REGEN_MODES}")
+
+    log.info(f"Regen request: finding={req.finding_id}, mode={req.mode}, start={req.start_time}, dur={req.duration}")
+
+    options: list[RegenOption] = []
+
+    # Option 1 — original prompt
+    try:
+        mp4_1 = await _call_ltx_retake(req.video_uri, req.prompt, req.start_time, req.duration, req.mode)
+        url_1 = _upload_regen_clip(mp4_1, req.finding_id)
+        options.append(RegenOption(
+            id=f"{req.finding_id}_opt1",
+            video_url=url_1,
+            prompt=req.prompt,
+            duration=req.duration,
+        ))
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("LTX retake option 1 failed")
+        raise HTTPException(status_code=502, detail="LTX generation failed for option 1")
+
+    # Option 2 — alternative angle
+    try:
+        alt_prompt = f"{req.prompt}, alternative angle"
+        mp4_2 = await _call_ltx_retake(req.video_uri, alt_prompt, req.start_time, req.duration, req.mode)
+        url_2 = _upload_regen_clip(mp4_2, req.finding_id)
+        options.append(RegenOption(
+            id=f"{req.finding_id}_opt2",
+            video_url=url_2,
+            prompt=alt_prompt,
+            duration=req.duration,
+        ))
+    except Exception:
+        log.exception("LTX retake option 2 failed (non-fatal)")
+        # Still return option 1 if option 2 fails
+
+    log.info(f"Regen complete: finding={req.finding_id}, options={len(options)}")
+    return RegenResponse(finding_id=req.finding_id, options=options)
+
+
+@app.post("/api/regen/text-to-video", response_model=RegenResponse)
+async def regen_text_to_video(req: TextToVideoRequest):
+    """Generate video from text only using LTX-2.3."""
+    if not LTX_API_KEY:
+        log.error("LTX_API_KEY not set")
+        raise HTTPException(status_code=503, detail="LTX_API_KEY not configured")
+
+    log.info(f"Text-to-video request: finding={req.finding_id}, dur={req.duration}")
+
+    options: list[RegenOption] = []
+
+    # Option 1
+    try:
+        mp4_1 = await _call_ltx_text_to_video(req.prompt, req.duration)
+        url_1 = _upload_regen_clip(mp4_1, req.finding_id)
+        options.append(RegenOption(
+            id=f"{req.finding_id}_opt1",
+            video_url=url_1,
+            prompt=req.prompt,
+            duration=req.duration,
+        ))
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("LTX text-to-video option 1 failed")
+        raise HTTPException(status_code=502, detail="LTX text-to-video generation failed for option 1")
+
+    # Option 2
+    try:
+        alt_prompt = f"{req.prompt}, alternative angle"
+        mp4_2 = await _call_ltx_text_to_video(alt_prompt, req.duration)
+        url_2 = _upload_regen_clip(mp4_2, req.finding_id)
+        options.append(RegenOption(
+            id=f"{req.finding_id}_opt2",
+            video_url=url_2,
+            prompt=alt_prompt,
+            duration=req.duration,
+        ))
+    except Exception:
+        log.exception("LTX text-to-video option 2 failed (non-fatal)")
+
+    log.info(f"Text-to-video complete: finding={req.finding_id}, options={len(options)}")
+    return RegenResponse(finding_id=req.finding_id, options=options)

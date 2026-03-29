@@ -308,6 +308,7 @@ export default function Home() {
               onRemediation={handleRemediation}
               riskScore={riskScore}
               riskExplanation={riskExplanation}
+              s3Uri={s3Uri}
             />
           )}
           {activeTab === "rights" && (

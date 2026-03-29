@@ -6,6 +6,13 @@ export type Remediation = "none" | "blur" | "bleep" | "ai_fix";
 
 export type VideoSource = "upload" | "twelvelabs" | "iconik";
 
+export interface RegenOption {
+  id: string;
+  video_url: string;
+  prompt: string;
+  duration: number;
+}
+
 export interface Finding {
   id: string;
   text: string;
@@ -16,6 +23,8 @@ export interface Finding {
   source: string;
   decision: Decision;
   remediation: Remediation;
+  regen_options?: RegenOption[];
+  selected_regen?: string; // selected option ID
 }
 
 export interface RightsEntry {

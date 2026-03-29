@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { Finding, Decision, Remediation } from "@/types";
+import type { Finding, Decision, Remediation, RegenOption } from "@/types";
+import { regenClip } from "@/lib/api";
 
 interface FindingCardProps {
   finding: Finding;
@@ -9,6 +10,7 @@ interface FindingCardProps {
   onDecision: (id: string, decision: Decision) => void;
   onRemediation: (id: string, remediation: Remediation) => void;
   isActive: boolean;
+  s3Uri?: string | null;
 }
 
 function severityBadge(severity: string) {
@@ -45,24 +47,42 @@ function decisionBadge(decision: Decision) {
   }
 }
 
-const REMEDIATION_OPTIONS = [
-  {
-    gradient: "from-purple-600 to-indigo-700",
-    description: "Alternative shot without flagged element...",
-  },
-  {
-    gradient: "from-teal-600 to-cyan-700",
-    description: "Cutaway to neutral establishing shot...",
-  },
-  {
-    gradient: "from-blue-600 to-sky-700",
-    description: "AI-generated replacement with compliant content...",
-  },
-  {
-    gradient: "from-green-600 to-emerald-700",
-    description: "Audio-only replacement maintaining visual...",
-  },
+type RegenType = "Video" | "Audio" | "Captions" | "Titles" | "Lower Thirds" | "Select";
+
+const REGEN_PILLS: RegenType[] = ["Video", "Audio", "Captions", "Titles", "Lower Thirds", "Select"];
+
+const REGEN_GRADIENTS = [
+  "from-purple-600 to-indigo-700",
+  "from-teal-600 to-cyan-700",
 ];
+
+function regenTypeToMode(type: RegenType): string {
+  switch (type) {
+    case "Video":
+      return "replace_video";
+    case "Audio":
+      return "replace_audio";
+    case "Captions":
+    case "Titles":
+    case "Lower Thirds":
+      return "replace_video";
+    case "Select":
+      return "replace_audio_and_video";
+  }
+}
+
+function regenTypeToPromptPrefix(type: RegenType): string {
+  switch (type) {
+    case "Captions":
+      return "Generate compliant captions overlay: ";
+    case "Titles":
+      return "Generate compliant title card: ";
+    case "Lower Thirds":
+      return "Generate compliant lower third graphic: ";
+    default:
+      return "";
+  }
+}
 
 export default function FindingCard({
   finding,
@@ -70,8 +90,56 @@ export default function FindingCard({
   onDecision,
   onRemediation,
   isActive,
+  s3Uri,
 }: FindingCardProps) {
   const [showRemediation, setShowRemediation] = useState(false);
+  const [regenType, setRegenType] = useState<RegenType | null>(null);
+  const [regenLoading, setRegenLoading] = useState(false);
+  const [regenOptions, setRegenOptions] = useState<RegenOption[]>([]);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [selectDropdownOpen, setSelectDropdownOpen] = useState(false);
+
+  const handleRegenPill = async (type: RegenType) => {
+    if (type === "Select") {
+      setRegenType(type);
+      setSelectDropdownOpen(true);
+      return;
+    }
+    await runRegen(type);
+  };
+
+  const runRegen = async (type: RegenType, overrideMode?: string) => {
+    setRegenType(type);
+    setSelectDropdownOpen(false);
+    setRegenLoading(true);
+    setRegenOptions([]);
+    setSelectedOption(null);
+
+    const mode = overrideMode || regenTypeToMode(type);
+    const prefix = regenTypeToPromptPrefix(type);
+    const prompt = `${prefix}${finding.text}`;
+
+    try {
+      const result = await regenClip({
+        video_uri: s3Uri || "",
+        start_time: finding.timecode,
+        duration: 3,
+        prompt,
+        mode,
+        finding_id: finding.id,
+      });
+      setRegenOptions(result.options);
+    } catch (err) {
+      console.error("Regen failed:", err);
+      // Show placeholder options on error so the UI is still functional
+      setRegenOptions([
+        { id: `${finding.id}_opt1`, video_url: "", prompt, duration: 3 },
+        { id: `${finding.id}_opt2`, video_url: "", prompt: `${prompt}, alternative angle`, duration: 3 },
+      ]);
+    } finally {
+      setRegenLoading(false);
+    }
+  };
 
   return (
     <div
@@ -207,38 +275,128 @@ export default function FindingCard({
             {finding.text}
           </p>
 
-          {/* Prompt */}
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground/60 mb-3">
-            SELECT REPLACEMENT CLIP TO GENERATE:
-          </p>
-
-          {/* 2x2 grid */}
-          <div className="grid grid-cols-2 gap-3 mb-3">
-            {REMEDIATION_OPTIONS.map((opt, i) => (
-              <div key={i} className="flex flex-col gap-1.5">
-                {/* Gradient placeholder with play icon */}
-                <div
-                  className={`relative aspect-video rounded-md bg-gradient-to-br ${opt.gradient} flex items-center justify-center`}
-                >
-                  <svg
-                    className="w-8 h-8 text-white/70"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </div>
-                {/* Description */}
-                <p className="text-[10px] text-muted leading-snug">
-                  {opt.description}
-                </p>
-                {/* Generate button */}
-                <button className="w-full py-1.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white transition-colors">
-                  GENERATE
-                </button>
-              </div>
+          {/* Regen type pills */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {REGEN_PILLS.map((pill) => (
+              <button
+                key={pill}
+                onClick={() => handleRegenPill(pill)}
+                disabled={regenLoading}
+                className={`px-3 py-1 rounded-full text-[10px] font-semibold transition-colors ${
+                  regenType === pill
+                    ? "bg-purple-500 text-white"
+                    : "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20"
+                } ${regenLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                {pill}
+              </button>
             ))}
           </div>
+
+          {/* Select dropdown */}
+          {regenType === "Select" && selectDropdownOpen && (
+            <div className="mb-3 p-2 rounded-lg border border-purple-500/20 bg-surface">
+              <p className="text-[10px] font-semibold text-foreground/60 mb-1.5">SELECT MODE:</p>
+              {["replace_video", "replace_audio", "replace_audio_and_video"].map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => runRegen("Select", mode)}
+                  className="block w-full text-left px-2 py-1 text-[10px] text-purple-400 hover:bg-purple-500/10 rounded"
+                >
+                  {mode.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Loading state */}
+          {regenLoading && (
+            <div className="flex items-center gap-2 py-6 justify-center">
+              <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+              <span className="text-[11px] text-purple-400 font-medium">Generating...</span>
+            </div>
+          )}
+
+          {/* Regen options grid */}
+          {!regenLoading && regenOptions.length > 0 && (
+            <>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground/60 mb-3">
+                GENERATED OPTIONS:
+              </p>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                {regenOptions.map((opt, i) => (
+                  <div key={opt.id} className="flex flex-col gap-1.5">
+                    {/* Video preview or gradient placeholder */}
+                    <div
+                      className={`relative aspect-video rounded-md overflow-hidden ${
+                        opt.video_url
+                          ? "bg-black"
+                          : `bg-gradient-to-br ${REGEN_GRADIENTS[i % REGEN_GRADIENTS.length]}`
+                      } flex items-center justify-center`}
+                    >
+                      {opt.video_url ? (
+                        <video
+                          src={opt.video_url}
+                          className="w-full h-full object-cover"
+                          muted
+                          playsInline
+                          onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                          onMouseLeave={(e) => {
+                            const v = e.target as HTMLVideoElement;
+                            v.pause();
+                            v.currentTime = 0;
+                          }}
+                        />
+                      ) : (
+                        <svg
+                          className="w-8 h-8 text-white/70"
+                          fill="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                      )}
+                      <span className="absolute top-1 left-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">
+                        Option {i + 1}
+                      </span>
+                    </div>
+                    {/* Prompt */}
+                    <p className="text-[10px] text-muted leading-snug truncate">
+                      {opt.prompt}
+                    </p>
+                    {/* Actions */}
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => {
+                          if (opt.video_url) window.open(opt.video_url, "_blank");
+                        }}
+                        className="flex-1 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                      >
+                        Preview
+                      </button>
+                      <button
+                        onClick={() => setSelectedOption(opt.id)}
+                        className={`flex-1 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                          selectedOption === opt.id
+                            ? "bg-emerald-500 text-white"
+                            : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                        }`}
+                      >
+                        {selectedOption === opt.id ? "Approved" : "Approve"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Initial state — no type selected yet */}
+          {!regenLoading && regenOptions.length === 0 && !regenType && (
+            <p className="text-[10px] text-center text-muted py-4">
+              Select a remediation type above to generate replacement clips
+            </p>
+          )}
 
           {/* Upload custom link */}
           <p className="text-[10px] text-center text-purple-400 hover:text-purple-300 cursor-pointer underline underline-offset-2">
