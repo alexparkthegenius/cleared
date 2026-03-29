@@ -30,11 +30,6 @@ export default function GroundTruth({ initialValue, onSave }: GroundTruthProps) 
             </span>
           )}
         </div>
-        <p className="text-xs text-muted mb-3 leading-relaxed">
-          Add manual compliance annotations, notes, or ground truth labels for
-          evaluation. This data can be used to benchmark automated findings
-          against human review.
-        </p>
       </div>
 
       <textarea

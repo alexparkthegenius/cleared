@@ -6,6 +6,7 @@ import type { RightsEntry } from "@/types";
 interface RightsTrackerProps {
   entries: RightsEntry[];
   onAddEntry: (entry: Omit<RightsEntry, "id">) => void;
+  onSeek?: (time: number) => void;
 }
 
 const TYPES = ["music", "footage", "image", "talent", "brand", "other"] as const;
@@ -39,9 +40,22 @@ function typeBadge(type: string) {
   return colors[idx >= 0 ? idx : 5];
 }
 
+function parseTimecodeFromAsset(asset: string): number | null {
+  const match = asset.match(/\[(\d{1,2}):(\d{2})\]/);
+  if (match) {
+    return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+  }
+  const secMatch = asset.match(/\[(\d+)\]/);
+  if (secMatch) {
+    return parseInt(secMatch[1], 10);
+  }
+  return null;
+}
+
 export default function RightsTracker({
   entries,
   onAddEntry,
+  onSeek,
 }: RightsTrackerProps) {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
@@ -284,10 +298,13 @@ export default function RightsTracker({
                 </td>
               </tr>
             ) : (
-              filtered.map((entry) => (
+              filtered.map((entry) => {
+                const tc = parseTimecodeFromAsset(entry.asset);
+                return (
                 <tr
                   key={entry.id}
-                  className="border-t border-border/50 hover:bg-foreground/[0.02] transition-colors"
+                  onClick={() => { if (tc != null && onSeek) onSeek(tc); }}
+                  className={`border-t border-border/50 hover:bg-foreground/[0.02] transition-colors ${tc != null && onSeek ? "cursor-pointer" : ""}`}
                 >
                   <td className="px-3 py-2.5 font-medium text-foreground">
                     {entry.asset}
@@ -318,7 +335,8 @@ export default function RightsTracker({
                     {entry.notes}
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

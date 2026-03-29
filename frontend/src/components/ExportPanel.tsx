@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { Finding } from "@/types";
 
 interface ExportPanelProps {
   onExport: (config: {
@@ -9,42 +10,25 @@ interface ExportPanelProps {
     formats: string[];
   }) => void;
   isExporting: boolean;
+  findings?: Finding[];
 }
 
-const DELIVERABLES = [
-  "Final Master",
-  "Compliance Report",
-  "Clearance Certificate",
-  "Pre-TX QC Report",
-  "Platform-specific Edit",
-  "Rights Summary",
+const DELIVERABLE_SPECS = [
+  "Broadcast ProRes 422HQ",
+  "Web H.264",
+  "Social H.264 vertical",
 ];
 
-const DELIVER_TO = [
-  "Local Download",
-  "S3 Bucket",
-  "Iconik",
-  "Frame.io",
-  "Google Drive",
-  "Email",
-  "Slack Channel",
+const EXPORT_OPTIONS = [
+  "ProRes",
+  "H.264",
+  "Send to Iconik",
+  "Send to NLE via OTIO",
 ];
 
-const EXCHANGE_FORMATS = [
-  "EBU-TT (Subtitles)",
-  "TTML (Timed Text)",
-  "BXF (Broadcast Exchange)",
-  "IMF (Interoperable Master)",
-  "MXF (Material Exchange)",
-  "JSON Manifest",
-  "PDF Report",
-  "CSV",
-];
-
-export default function ExportPanel({ onExport, isExporting }: ExportPanelProps) {
-  const [deliverable, setDeliverable] = useState(DELIVERABLES[0]);
-  const [deliverTo, setDeliverTo] = useState(DELIVER_TO[0]);
-  const [formats, setFormats] = useState<string[]>(["JSON Manifest", "PDF Report"]);
+export default function ExportPanel({ onExport, isExporting, findings = [] }: ExportPanelProps) {
+  const [deliverable, setDeliverable] = useState(DELIVERABLE_SPECS[0]);
+  const [formats, setFormats] = useState<string[]>(["ProRes"]);
 
   const toggleFormat = (f: string) => {
     setFormats((prev) =>
@@ -52,8 +36,38 @@ export default function ExportPanel({ onExport, isExporting }: ExportPanelProps)
     );
   };
 
+  const totalFindings = findings.length;
+  const approved = findings.filter((f) => f.decision === "approved").length;
+  const rejected = findings.filter((f) => f.decision === "rejected").length;
+  const pending = findings.filter((f) => f.decision === "pending").length;
+
   return (
     <div className="space-y-6 max-w-2xl">
+      {/* Approvals */}
+      <section>
+        <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-3">
+          Approvals
+        </label>
+        <div className="grid grid-cols-4 gap-3">
+          <div className="p-3 rounded-lg border border-border bg-surface/50 text-center">
+            <div className="text-lg font-bold text-foreground">{totalFindings}</div>
+            <div className="text-[10px] text-muted uppercase font-semibold">Total</div>
+          </div>
+          <div className="p-3 rounded-lg border border-border bg-surface/50 text-center">
+            <div className="text-lg font-bold text-emerald-400">{approved}</div>
+            <div className="text-[10px] text-muted uppercase font-semibold">Approved</div>
+          </div>
+          <div className="p-3 rounded-lg border border-border bg-surface/50 text-center">
+            <div className="text-lg font-bold text-red-400">{rejected}</div>
+            <div className="text-[10px] text-muted uppercase font-semibold">Rejected</div>
+          </div>
+          <div className="p-3 rounded-lg border border-border bg-surface/50 text-center">
+            <div className="text-lg font-bold text-amber-400">{pending}</div>
+            <div className="text-[10px] text-muted uppercase font-semibold">Pending</div>
+          </div>
+        </div>
+      </section>
+
       {/* Deliverable Spec */}
       <section>
         <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
@@ -64,7 +78,7 @@ export default function ExportPanel({ onExport, isExporting }: ExportPanelProps)
           onChange={(e) => setDeliverable(e.target.value)}
           className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
         >
-          {DELIVERABLES.map((d) => (
+          {DELIVERABLE_SPECS.map((d) => (
             <option key={d} value={d}>
               {d}
             </option>
@@ -72,31 +86,13 @@ export default function ExportPanel({ onExport, isExporting }: ExportPanelProps)
         </select>
       </section>
 
-      {/* Deliver To */}
-      <section>
-        <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
-          Deliver To
-        </label>
-        <select
-          value={deliverTo}
-          onChange={(e) => setDeliverTo(e.target.value)}
-          className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
-        >
-          {DELIVER_TO.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
-      </section>
-
-      {/* Exchange Formats */}
+      {/* Export Options */}
       <section>
         <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-3">
-          Exchange Formats
+          Export Options
         </label>
         <div className="grid grid-cols-2 gap-2">
-          {EXCHANGE_FORMATS.map((f) => (
+          {EXPORT_OPTIONS.map((f) => (
             <label
               key={f}
               className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
@@ -148,10 +144,6 @@ export default function ExportPanel({ onExport, isExporting }: ExportPanelProps)
             <span className="text-foreground font-medium">{deliverable}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted">Destination:</span>
-            <span className="text-foreground font-medium">{deliverTo}</span>
-          </div>
-          <div className="flex justify-between">
             <span className="text-muted">Formats:</span>
             <span className="text-foreground font-medium">
               {formats.length} selected
@@ -160,9 +152,9 @@ export default function ExportPanel({ onExport, isExporting }: ExportPanelProps)
         </div>
       </div>
 
-      {/* Commit & Export */}
+      {/* Go Button */}
       <button
-        onClick={() => onExport({ deliverable, deliverTo, formats })}
+        onClick={() => onExport({ deliverable, deliverTo: "Local Download", formats })}
         disabled={isExporting || formats.length === 0}
         className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-all active:scale-[0.98]"
       >
@@ -186,7 +178,7 @@ export default function ExportPanel({ onExport, isExporting }: ExportPanelProps)
             Exporting...
           </span>
         ) : (
-          "Commit & Export"
+          "Go"
         )}
       </button>
     </div>

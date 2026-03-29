@@ -58,7 +58,7 @@ export type Jurisdiction =
 export type TabId =
   | "compliance"
   | "rights"
-  | "export"
+  | "approve"
   | "ground-truth";
 
 export interface ExportConfig {

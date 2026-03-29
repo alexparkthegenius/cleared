@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { Finding } from "@/types";
 
 interface ViolationsPanelProps {
@@ -27,11 +28,42 @@ function severityDot(severity: string) {
   }
 }
 
+type FilterKey = "sp" | "rc" | "video" | "audio";
+
 export default function ViolationsPanel({
   findings,
   currentTime,
   onSeek,
 }: ViolationsPanelProps) {
+  const [filters, setFilters] = useState<Record<FilterKey, boolean>>({
+    sp: true,
+    rc: true,
+    video: true,
+    audio: true,
+  });
+
+  const toggleFilter = (key: FilterKey) => {
+    setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const filteredFindings = findings.filter((f) => {
+    const src = (f.source || "").toLowerCase();
+    const rule = (f.rule || "").toLowerCase();
+    const text = (f.text || "").toLowerCase();
+    const combined = `${src} ${rule} ${text}`;
+
+    // S+P = Standards & Practices (compliance, language, nudity, etc.)
+    if (!filters.sp && (combined.includes("standard") || combined.includes("compliance") || combined.includes("language") || combined.includes("nudity") || combined.includes("violence") || src === "compliance")) return false;
+    // R+C = Rights & Clearance
+    if (!filters.rc && (combined.includes("rights") || combined.includes("clearance") || combined.includes("music") || combined.includes("brand") || combined.includes("logo") || combined.includes("talent"))) return false;
+    // Video
+    if (!filters.video && (combined.includes("video") || combined.includes("visual") || combined.includes("image") || combined.includes("frame"))) return false;
+    // Audio
+    if (!filters.audio && (combined.includes("audio") || combined.includes("sound") || combined.includes("music") || combined.includes("bleep"))) return false;
+
+    return true;
+  });
+
   if (findings.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted py-12">
@@ -53,17 +85,38 @@ export default function ViolationsPanel({
     );
   }
 
-  const sorted = [...findings].sort((a, b) => a.timecode - b.timecode);
+  const sorted = [...filteredFindings].sort((a, b) => a.timecode - b.timecode);
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-2 border-b border-border flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">
-          Timeline
+          Violations
         </h3>
         <span className="text-[10px] text-muted tabular-nums">
-          {findings.length} issue{findings.length !== 1 ? "s" : ""}
+          {filteredFindings.length} issue{filteredFindings.length !== 1 ? "s" : ""}
         </span>
+      </div>
+      {/* Filter bar */}
+      <div className="px-3 py-1.5 border-b border-border flex items-center gap-1">
+        {([
+          { key: "sp" as FilterKey, label: "S+P" },
+          { key: "rc" as FilterKey, label: "R+C" },
+          { key: "video" as FilterKey, label: "Video" },
+          { key: "audio" as FilterKey, label: "Audio" },
+        ]).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => toggleFilter(key)}
+            className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+              filters[key]
+                ? "bg-emerald-500/20 text-emerald-400"
+                : "bg-background text-muted hover:text-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="flex-1 overflow-y-auto">
         {sorted.map((f) => {

@@ -11,6 +11,7 @@ interface VideoPlayerProps {
   onSeek: (time: number) => void;
   duration: number;
   onDurationChange: (d: number) => void;
+  seekTarget?: number | null;
 }
 
 function severityColor(severity: string): string {
@@ -34,6 +35,7 @@ export default function VideoPlayer({
   onSeek,
   duration,
   onDurationChange,
+  seekTarget,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrubberRef = useRef<HTMLDivElement>(null);
@@ -57,6 +59,13 @@ export default function VideoPlayer({
       video.removeEventListener("pause", handlePause);
     };
   }, [onTimeUpdate, onDurationChange]);
+
+  // Watch for seekTarget changes from parent (e.g. clicking a finding or rights entry)
+  useEffect(() => {
+    if (seekTarget != null && videoRef.current) {
+      videoRef.current.currentTime = seekTarget;
+    }
+  }, [seekTarget]);
 
   const seekTo = useCallback(
     (time: number) => {

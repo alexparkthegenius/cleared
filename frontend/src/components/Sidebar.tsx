@@ -51,6 +51,7 @@ export default function Sidebar({
   const [jurisdictions, setJurisdictions] = useState<Jurisdiction[]>([]);
   const [customRules, setCustomRules] = useState("");
   const [showCustomRules, setShowCustomRules] = useState(false);
+  const [quickRule, setQuickRule] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
   const togglePlatform = (p: Platform) => {
@@ -218,20 +219,62 @@ export default function Sidebar({
                 </p>
               </label>
             </div>
+            {/* Recent uploads */}
+            <div className="mt-3">
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-1.5">
+                Recent uploads
+              </label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4].map((i) => (
+                  <div
+                    key={i}
+                    className="w-14 h-10 rounded bg-background border border-border flex items-center justify-center text-muted/40"
+                  >
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
+                ))}
+              </div>
+            </div>
           </section>
         )}
 
-        {/* TwelveLabs / Iconik placeholder */}
-        {source !== "upload" && (
+        {/* TwelveLabs dropdown */}
+        {source === "twelvelabs" && (
           <section>
             <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
-              {source === "twelvelabs" ? "TwelveLabs" : "Iconik"} Index
+              Select Index or Video
             </label>
-            <input
-              type="text"
-              placeholder={`Enter ${source === "twelvelabs" ? "index" : "asset"} ID...`}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
-            />
+            <select
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+              defaultValue=""
+            >
+              <option value="" disabled>Select an index or video...</option>
+              <option value="idx-001">Index: Brand Safety Q1</option>
+              <option value="idx-002">Index: Campaign Review 2026</option>
+              <option value="vid-001">Video: Product Launch v3</option>
+              <option value="vid-002">Video: TV Spot 30s</option>
+            </select>
+          </section>
+        )}
+
+        {/* Iconik dropdown */}
+        {source === "iconik" && (
+          <section>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+              Select Asset or Collection
+            </label>
+            <select
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+              defaultValue=""
+            >
+              <option value="" disabled>Select an asset or collection...</option>
+              <option value="col-001">Collection: Spring Campaign</option>
+              <option value="col-002">Collection: Archive 2025</option>
+              <option value="ast-001">Asset: Hero Film Final</option>
+              <option value="ast-002">Asset: BTS Reel</option>
+            </select>
           </section>
         )}
 
@@ -325,13 +368,41 @@ export default function Sidebar({
             Custom Rules
           </button>
           {showCustomRules && (
-            <textarea
-              value={customRules}
-              onChange={(e) => setCustomRules(e.target.value)}
-              placeholder="Add custom compliance rules..."
-              rows={4}
-              className="mt-2 w-full px-3 py-2 bg-background border border-border rounded-lg text-xs text-foreground placeholder:text-muted resize-none focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
-            />
+            <div className="mt-2 space-y-2">
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={quickRule}
+                  onChange={(e) => setQuickRule(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && quickRule.trim()) {
+                      setCustomRules((prev) => (prev ? prev + "\n" : "") + quickRule.trim());
+                      setQuickRule("");
+                    }
+                  }}
+                  placeholder="Describe a rule in plain language..."
+                  className="flex-1 px-3 py-1.5 bg-background border border-border rounded-lg text-xs text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+                />
+                <button
+                  onClick={() => {
+                    if (quickRule.trim()) {
+                      setCustomRules((prev) => (prev ? prev + "\n" : "") + quickRule.trim());
+                      setQuickRule("");
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+              <textarea
+                value={customRules}
+                onChange={(e) => setCustomRules(e.target.value)}
+                placeholder="Add custom compliance rules..."
+                rows={4}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-xs text-foreground placeholder:text-muted resize-none focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50"
+              />
+            </div>
           )}
         </section>
       </div>

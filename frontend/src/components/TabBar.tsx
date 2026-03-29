@@ -11,7 +11,7 @@ interface TabBarProps {
 const TABS: { id: TabId; label: string }[] = [
   { id: "compliance", label: "Compliance Findings" },
   { id: "rights", label: "Rights Tracker" },
-  { id: "export", label: "Export" },
+  { id: "approve", label: "Approve & Send" },
   { id: "ground-truth", label: "Ground Truth" },
 ];
 

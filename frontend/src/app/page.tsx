@@ -37,6 +37,7 @@ export default function Home() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(120);
+  const [seekTarget, setSeekTarget] = useState<number | null>(null);
 
   // Analysis
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -71,6 +72,14 @@ export default function Home() {
     setUploadError(null);
     setIsUploading(true);
 
+    // Clear previous analysis state
+    setFindings([]);
+    setRiskScore(null);
+    setRiskExplanation("");
+    setRightsEntries([]);
+    setCurrentTime(0);
+    setSeekTarget(null);
+
     // Upload to S3
     try {
       const result = await uploadVideo(file);
@@ -87,6 +96,7 @@ export default function Home() {
 
   const handleSeek = useCallback((time: number) => {
     setCurrentTime(time);
+    setSeekTarget(time);
   }, []);
 
   const handleRunCheck = useCallback(
@@ -146,7 +156,7 @@ export default function Home() {
         const mappedFindings: Finding[] = ((result as any).findings || []).map((f: any, i: number) => ({
           id: `f${i}`,
           timecode: typeof f.timecode === "number" ? f.timecode : (f.timestamp_seconds as number) || 0,
-          text: (f.text as string) || (f.description as string) || "",
+          text: ((f.text as string) || (f.description as string) || "").replace(/\s*—\s*Severity:\s*\w+\s*—\s*Confidence:\s*\d+/gi, ""),
           severity: ((f.severity as string) || "MINOR").toUpperCase() as Finding["severity"],
           confidence: (f.confidence as number) || 50,
           rule: (f.rule as string) || "",
@@ -256,6 +266,7 @@ export default function Home() {
               onSeek={handleSeek}
               duration={duration}
               onDurationChange={setDuration}
+              seekTarget={seekTarget}
             />
           </div>
 
@@ -295,10 +306,11 @@ export default function Home() {
             <RightsTracker
               entries={rightsEntries}
               onAddEntry={handleAddRightsEntry}
+              onSeek={handleSeek}
             />
           )}
-          {activeTab === "export" && (
-            <ExportPanel onExport={handleExport} isExporting={isExporting} />
+          {activeTab === "approve" && (
+            <ExportPanel onExport={handleExport} isExporting={isExporting} findings={findings} />
           )}
           {activeTab === "ground-truth" && (
             <GroundTruth
