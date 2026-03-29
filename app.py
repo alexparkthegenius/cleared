@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 # INLINED MODULE: app_config.py
 # ══════════════════════════════════════════════════════════════
 
-"""Constants and configuration for Cleared compliance app."""
+# Constants and configuration for Cleared compliance app.
 
 RULESETS = {
     "Broadcast Standards": {
@@ -94,7 +94,7 @@ DEFAULT_S3_BUCKET = "cleared-compliance-videos"
 # INLINED MODULE: helpers.py
 # ══════════════════════════════════════════════════════════════
 
-"""Helper functions for parsing, scoring, logging, and metrics."""
+# Helper functions for parsing, scoring, logging, and metrics.
 
 _helpers_log = logging.getLogger("cleared.helpers")
 
@@ -545,7 +545,7 @@ One paragraph summary for client."""
 # INLINED MODULE: styles.py
 # ══════════════════════════════════════════════════════════════
 
-"""All CSS styles for the Cleared compliance app — themed with CSS variables."""
+# All CSS styles for the Cleared compliance app — themed with CSS variables.
 
 
 def get_app_css():
@@ -1274,11 +1274,9 @@ function toggleTheme() {
 # INLINED MODULE: bedrock_client.py
 # ══════════════════════════════════════════════════════════════
 
-"""Bedrock wrapper for TwelveLabs Pegasus (analysis) and Marengo (search/retrieval).
-
-All model inference goes through this module. No TwelveLabs SDK for model calls.
-Video input is S3 URI or local file path.
-"""
+# Bedrock wrapper for TwelveLabs Pegasus (analysis) and Marengo (search/retrieval).
+# All model inference goes through this module. No TwelveLabs SDK for model calls.
+# Video input is S3 URI or local file path.
 
 _bedrock_log = logging.getLogger("cleared.bedrock")
 
