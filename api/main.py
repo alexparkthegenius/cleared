@@ -539,6 +539,7 @@ async def _call_ltx_text_to_video(prompt: str, duration: float) -> bytes:
         "prompt": prompt,
         "duration": duration,
         "model": "ltx-2-3-pro",
+        "resolution": "1920x1080",
     }
     headers = {
         "Authorization": f"Bearer {LTX_API_KEY}",
