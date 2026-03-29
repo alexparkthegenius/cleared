@@ -131,7 +131,9 @@ export default function Home() {
 
   const handleSeek = useCallback((time: number) => {
     setCurrentTime(time);
-    setSeekTarget(time);
+    // Force re-seek even if same timecode by briefly nulling then setting
+    setSeekTarget(null);
+    requestAnimationFrame(() => setSeekTarget(time));
   }, []);
 
   const handleRunCheck = useCallback(

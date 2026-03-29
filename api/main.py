@@ -486,33 +486,40 @@ async def analyze_video(req: AnalyzeRequest):
     except Exception:
         log.exception("Finding deduplication failed, using raw findings")
 
-    # ── Fix clustered timestamps ──────────────────────────────
-    # If most findings have timestamp 0 (Pegasus didn't assign real timecodes),
-    # distribute them evenly across an estimated video duration.
+    # ── Fix clustered timestamps for rights findings ─────────
+    # Content flags (Section 1) get real timecodes from Pegasus.
+    # Rights findings (Section 3) often cluster at 0:00 — distribute those
+    # across the video duration so they don't all stack at the start.
     try:
-        timestamps = [parse_timestamp_seconds(f) for f in all_findings]
-        zero_count = sum(1 for t in timestamps if t <= 1)
-        if len(all_findings) > 2 and zero_count >= len(all_findings) * 0.7:
-            # Most timestamps are 0 — distribute evenly
-            # Estimate duration from the max non-zero timestamp, or default to 120s
-            max_ts = max(timestamps) if max(timestamps) > 0 else 120
-            video_duration = max(max_ts, 60)  # at least 60s
-            interval = video_duration / (len(all_findings) + 1)
-            log.warning(f"Timestamps clustered at 0 ({zero_count}/{len(all_findings)}). "
+        # Separate content vs rights findings
+        content_with_ts = [f for f in all_findings if f.get("source") == "compliance"]
+        rights_with_ts = [f for f in all_findings if f.get("source") == "rights"]
+
+        # Get max content timestamp as video duration estimate
+        content_timestamps = [parse_timestamp_seconds(f) for f in content_with_ts]
+        max_content_ts = max(content_timestamps) if content_timestamps and max(content_timestamps) > 0 else 120
+        video_duration = max(max_content_ts, 60)
+
+        # Check if rights findings are clustered at 0
+        rights_timestamps = [parse_timestamp_seconds(f) for f in rights_with_ts]
+        rights_zero_count = sum(1 for t in rights_timestamps if t <= 1)
+
+        if len(rights_with_ts) > 1 and rights_zero_count >= len(rights_with_ts) * 0.6:
+            interval = video_duration / (len(rights_with_ts) + 1)
+            log.warning(f"Rights timestamps clustered at 0 ({rights_zero_count}/{len(rights_with_ts)}). "
                        f"Distributing across {video_duration}s at {interval:.1f}s intervals")
-            for idx, f in enumerate(all_findings):
+            for idx, f in enumerate(rights_with_ts):
                 current_ts = parse_timestamp_seconds(f)
                 if current_ts <= 1:
                     new_ts = int(interval * (idx + 1))
-                    # Inject the new timestamp into the text so parse_timestamp_seconds picks it up
                     old_text = f.get("text", "")
                     if not re.match(r'^\[[\d:]+\]', old_text):
                         mm = new_ts // 60
                         ss = new_ts % 60
                         f["text"] = f"[{mm:02d}:{ss:02d}] {old_text}"
-                    log.info(f"  Redistributed finding {idx}: 0s -> {new_ts}s")
+                    log.info(f"  Rights finding {idx}: 0s -> {new_ts}s")
     except Exception:
-        log.exception("Timestamp redistribution failed (non-fatal)")
+        log.exception("Rights timestamp redistribution failed (non-fatal)")
 
     # Compute risk score
     try:
