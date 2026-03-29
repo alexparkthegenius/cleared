@@ -70,7 +70,14 @@ def upload_to_s3(file_bytes: bytes, filename: str) -> str | None:
         return None
     try:
         key = f"uploads/{filename}"
-        s3.put_object(Bucket=S3_BUCKET, Key=key, Body=file_bytes)
+        content_type = "video/mp4"
+        if filename.endswith(".mov"):
+            content_type = "video/quicktime"
+        elif filename.endswith(".mkv"):
+            content_type = "video/x-matroska"
+        elif filename.endswith(".avi"):
+            content_type = "video/x-msvideo"
+        s3.put_object(Bucket=S3_BUCKET, Key=key, Body=file_bytes, ContentType=content_type)
         uri = f"s3://{S3_BUCKET}/{key}"
         _bedrock_log.info(f"Uploaded to S3: {uri}")
         return uri
@@ -93,9 +100,19 @@ def get_s3_presigned_url(s3_uri: str, expires_in: int = 3600) -> str | None:
         parts = s3_uri.replace("s3://", "").split("/", 1)
         bucket = parts[0]
         key = parts[1] if len(parts) > 1 else ""
+        # Determine content type for response override
+        content_type = "video/mp4"
+        if key.endswith(".mov"):
+            content_type = "video/quicktime"
+        elif key.endswith(".mkv"):
+            content_type = "video/x-matroska"
         url = s3.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
+            Params={
+                "Bucket": bucket,
+                "Key": key,
+                "ResponseContentType": content_type,
+            },
             ExpiresIn=expires_in,
         )
         _bedrock_log.info(f"Presigned URL generated for {s3_uri[:50]}...")
