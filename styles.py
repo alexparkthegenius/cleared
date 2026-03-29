@@ -286,11 +286,38 @@ section[data-testid="stSidebar"] .stCaption p {
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border-light) !important;
     border-radius: 6px !important;
+    overflow: visible !important;
 }
 .stApp .stExpander summary,
 .stApp .stExpander summary span,
 .stApp [data-testid="stExpander"] summary span {
     color: var(--text-secondary) !important;
+}
+/* fix expander icon text bleeding through */
+.stApp .stExpander [data-testid="stExpanderToggleIcon"],
+.stApp [data-testid="stExpander"] [data-testid="stExpanderToggleIcon"] {
+    font-size: 0 !important;
+    overflow: hidden !important;
+}
+.stApp .stExpander [data-testid="stExpanderToggleIcon"] svg {
+    font-size: 1rem !important;
+    width: 1rem !important;
+    height: 1rem !important;
+    fill: var(--text-muted) !important;
+}
+/* prevent expander content from overlapping siblings */
+.stApp .stExpander [data-testid="stExpanderDetails"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+/* sidebar expander specific fixes */
+.stApp section[data-testid="stSidebar"] .stExpander {
+    margin-bottom: 0.5rem !important;
+}
+.stApp section[data-testid="stSidebar"] .stExpander summary {
+    padding: 0.5rem 0.75rem !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
 }
 
 /* ── DATE INPUT ── */
