@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type {
   Finding,
   RightsEntry,
@@ -59,6 +59,8 @@ export default function Home() {
   // Video file + S3 state
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [s3Uri, setS3Uri] = useState<string | null>(null);
+  const s3UriRef = useRef<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Handlers
@@ -67,15 +69,19 @@ export default function Home() {
     setVideoUrl(url);
     setVideoFile(file);
     setUploadError(null);
+    setIsUploading(true);
 
-    // Upload to S3 in background
+    // Upload to S3
     try {
       const result = await uploadVideo(file);
       setS3Uri(result.s3_uri);
+      s3UriRef.current = result.s3_uri;
       console.log("Uploaded to S3:", result.s3_uri);
     } catch (err) {
       console.error("Upload failed:", err);
       setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setIsUploading(false);
     }
   }, []);
 
@@ -93,8 +99,25 @@ export default function Home() {
       setIsAnalyzing(true);
       setActiveTab("compliance");
 
+      // Wait for upload if still in progress
+      if (isUploading) {
+        console.log("Waiting for upload to complete...");
+        await new Promise<void>((resolve) => {
+          const check = setInterval(() => {
+            if (s3UriRef.current) {
+              clearInterval(check);
+              resolve();
+            }
+          }, 200);
+          // Timeout after 60s
+          setTimeout(() => { clearInterval(check); resolve(); }, 60000);
+        });
+      }
+
+      const currentS3Uri = s3UriRef.current;
+
       // If no S3 URI yet, fall back to mock data
-      if (!s3Uri) {
+      if (!currentS3Uri) {
         console.warn("No S3 URI — using mock data");
         await new Promise((resolve) => setTimeout(resolve, 2200));
         setFindings(MOCK_FINDINGS);
@@ -107,7 +130,7 @@ export default function Home() {
 
       try {
         const result = await analyzeVideo({
-          s3_uri: s3Uri,
+          s3_uri: currentS3Uri,
           platforms: config.platforms,
           jurisdictions: config.jurisdictions,
           custom_rules: config.customRules || undefined,
@@ -161,7 +184,7 @@ export default function Home() {
 
       setIsAnalyzing(false);
     },
-    [s3Uri]
+    [isUploading]
   );
 
   const handleDecision = useCallback(
