@@ -163,7 +163,7 @@ export default function Home() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mappedFindings: Finding[] = ((result as any).findings || []).map((f: any, i: number) => ({
           id: `f${i}`,
-          timecode: typeof f.timecode === "number" ? f.timecode : (f.timestamp_seconds as number) || 0,
+          timecode: Number(f.timecode ?? f.timestamp_seconds ?? 0) || 0,
           text: ((f.text as string) || (f.description as string) || "").replace(/\s*—\s*Severity:\s*\w+\s*—\s*Confidence:\s*\d+/gi, ""),
           severity: ((f.severity as string) || "MINOR").toUpperCase() as Finding["severity"],
           confidence: (f.confidence as number) || 50,
@@ -238,13 +238,46 @@ export default function Home() {
   );
 
   const handleExport = useCallback(
-    async (_config: { deliverable: string; deliverTo: string; formats: string[] }) => {
+    async (config: { deliverable: string; deliverTo: string; formats: string[] }) => {
       setIsExporting(true);
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      setIsExporting(false);
-      // In production, call exportManifest API
+      try {
+        const manifest = {
+          report_id: `cleared_${Date.now()}`,
+          generated_at: new Date().toISOString(),
+          video_id: s3Uri || videoUrl || "",
+          video_label: videoUrl ? "Uploaded video" : "",
+          ruleset: "Broadcast Standards",
+          platforms: [],
+          jurisdictions: [],
+          risk_score: analysisResult?.risk_score ?? 0,
+          deliverable_spec: config.deliverable,
+          deliver_to: config.deliverTo,
+          exchange_formats: config.formats,
+          findings: findings.map((f) => ({
+            text: f.text,
+            severity: f.severity,
+            confidence: f.confidence,
+            timecode: f.timecode,
+            rule: f.rule,
+            decision: f.decision || "pending",
+            remediation: f.remediation || "none",
+          })),
+        };
+        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `cleared_export_${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        console.log("Export manifest downloaded:", manifest.report_id);
+      } catch (err) {
+        console.error("Export failed:", err);
+      } finally {
+        setIsExporting(false);
+      }
     },
-    []
+    [findings, s3Uri, videoUrl, analysisResult]
   );
 
   return (
