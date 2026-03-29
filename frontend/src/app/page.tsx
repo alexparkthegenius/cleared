@@ -116,7 +116,8 @@ export default function Home() {
         });
 
         // Map API findings to frontend Finding type
-        const mappedFindings: Finding[] = (result.findings || []).map((f: Record<string, unknown>, i: number) => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mappedFindings: Finding[] = ((result as any).findings || []).map((f: any, i: number) => ({
           id: `f${i}`,
           timecode: typeof f.timecode === "number" ? f.timecode : (f.timestamp_seconds as number) || 0,
           text: (f.text as string) || (f.description as string) || "",
@@ -132,8 +133,11 @@ export default function Home() {
         setRiskScore(result.risk_score || 0);
         setRiskExplanation(result.risk_explanation || "");
 
-        if (result.rights_entries && result.rights_entries.length > 0) {
-          const mappedRights: RightsEntry[] = result.rights_entries.map((r: Record<string, unknown>, i: number) => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rawResult = result as any;
+        if (rawResult.rights_entries && rawResult.rights_entries.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mappedRights: RightsEntry[] = rawResult.rights_entries.map((r: any, i: number) => ({
             id: `r${i}`,
             asset: (r.asset as string) || "",
             type: (r.type as string) || "other",
