@@ -1,6 +1,8 @@
 import os
+import re
 import json
 import time
+import base64
 import logging
 import traceback
 import html as html_mod
@@ -9,6 +11,1524 @@ from datetime import datetime, date, timedelta
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
+
+
+# ══════════════════════════════════════════════════════════════
+# INLINED MODULE: app_config.py
+# ══════════════════════════════════════════════════════════════
+
+"""Constants and configuration for Cleared compliance app."""
+
+RULESETS = {
+    "Broadcast Standards": {
+        "description": "Standard broadcast compliance rules",
+        "rules": [
+            "No visible alcohol branding in content targeted to audiences under 21",
+            "Flag graphic violence or blood in content without proper rating disclosure",
+            "No nudity or sexual content without appropriate rating",
+            "No profanity or hate speech before watershed (9pm)",
+            "No tobacco or drug use without health warning",
+            "No dangerous stunts without safety disclaimer",
+        ]
+    },
+    "Brand Guidelines": {
+        "description": "Advertising creative brand safety",
+        "rules": [
+            "Detect unauthorized use of competitor brands or trademarks",
+            "No negative portrayal of the brand or its products",
+            "Brand logo must appear in final 5 seconds",
+            "No association with violence, controversy, or adult content",
+            "Talent must be cleared and releases on file",
+            "No artwork or music without clearance documentation",
+        ]
+    },
+    "Platform Policies": {
+        "description": "YouTube, TikTok, streaming platform requirements",
+        "rules": [
+            "Identify language that violates platform hate speech policies",
+            "No alcohol shown being consumed for TikTok audiences",
+            "No graphic violence without age restriction flag",
+            "No misinformation or misleading health claims",
+            "No copyright music without license verification",
+            "Sponsored content must include disclosure",
+        ]
+    },
+    "Custom": {
+        "description": "Define your own rules",
+        "rules": []
+    }
+}
+
+JURISDICTIONS = {
+    "None": "",
+    "OFCOM (UK)": "OFCOM standards: Flag watershed violations (pre-9pm unsuitable content), product placement without disclosure, harmful content, sponsorship identification rules, due impartiality requirements for news content.",
+    "FCC (US)": "FCC standards: Flag indecency and profanity (18 USC 1464), unauthorized sponsorship identification, children's TV advertising limits (COPPA), equal time provisions, EAS abuse.",
+    "GDPR (EU)": "GDPR: Flag biometric data processing without consent disclosure, facial recognition of identifiable individuals, personal data visible on screen, children's data (under 16) without parental consent.",
+    "ARPP (France)": "ARPP: Flag alcohol advertising rules (Loi Evin), food advertising to children, environmental claims without substantiation, tobacco advertising prohibition.",
+    "CRTC (Canada)": "CRTC: Flag Canadian content requirements, bilingual obligations, alcohol advertising restrictions, children's programming standards.",
+    "Multi-region": "Check against ALL of: OFCOM (UK), FCC (US), GDPR (EU), ARPP (France), CRTC (Canada). Flag anything that would fail in ANY jurisdiction.",
+}
+
+PLATFORMS = [
+    "YouTube", "TikTok", "Instagram", "Broadcast pre-watershed",
+    "Streaming (Netflix/HBO)", "Roblox", "The Sphere", "Custom",
+]
+
+AUDIO_FLAGS = [
+    "Profanity / cursing",
+    "Unlicensed music",
+    "Sound effects requiring clearance",
+    "Singing / vocal performance",
+    "Brand jingles or slogans",
+    "Wilhelm scream or stock SFX",
+    "Hate speech or slurs",
+    "Drug or alcohol references in lyrics",
+    "Unauthorized celebrity voice",
+]
+
+# S3 bucket for video storage (set via env var CLEARED_S3_BUCKET)
+DEFAULT_S3_BUCKET = "cleared-compliance-videos"
+
+
+# ══════════════════════════════════════════════════════════════
+# INLINED MODULE: helpers.py
+# ══════════════════════════════════════════════════════════════
+
+"""Helper functions for parsing, scoring, logging, and metrics."""
+
+_helpers_log = logging.getLogger("cleared.helpers")
+
+
+def parse_findings(report):
+    """Extract timestamped findings from a compliance report.
+    Returns list of dicts: {text, timestamp, severity, confidence}
+
+    Robust parser handles multiple output formats from Pegasus:
+    - Timestamp: [HH:MM] ...
+    - [HH:MM] ...
+    - **[HH:MM]** ...
+    - 1. [HH:MM] ...
+    - - [HH:MM] ...
+    - Any line containing [MM:SS] or [HH:MM:SS] timestamps
+    """
+    _helpers_log.info(f"Parsing findings from report ({len(report)} chars, {report.count(chr(10))} lines)")
+    _helpers_log.info(f"Report preview: {report[:500]}")
+    findings = []
+    lines = report.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Pattern 1: Timestamp: [HH:MM] structured format
+        if line.lower().startswith("timestamp:") and "[" in line:
+            ts_match = re.search(r'\[[\d:]+(?:-[\d:]+)?\]', line)
+            ts_str = ts_match.group(0) if ts_match else ""
+
+            category = ""
+            for back in range(i - 1, max(i - 5, -1), -1):
+                prev = lines[back].strip()
+                if prev and not prev.lower().startswith("timestamp"):
+                    category = prev
+                    break
+
+            description = ""
+            severity = ""
+            confidence = 0
+            for fwd in range(i + 1, min(i + 10, len(lines))):
+                fwd_line = lines[fwd].strip()
+                if fwd_line.lower().startswith("description:"):
+                    description = fwd_line[len("description:"):].strip()
+                elif fwd_line.lower().startswith("severity:"):
+                    severity = fwd_line[len("severity:"):].strip()
+                elif fwd_line.lower().startswith("confidence:"):
+                    conf_match = re.search(r'(\d+)', fwd_line)
+                    if conf_match:
+                        confidence = min(int(conf_match.group(1)), 100)
+
+            parts = [p for p in [ts_str, category, description, severity] if p]
+            text = " — ".join(parts)
+            if not confidence:
+                confidence = _estimate_confidence(severity, description)
+            findings.append({
+                "text": text,
+                "severity": _normalize_severity(severity or text),
+                "confidence": confidence,
+                "source": "compliance",
+                "rule": category or "Content flag",
+            })
+            i += 1
+            continue
+
+        # Pattern 2: Line contains a timestamp [MM:SS] or [HH:MM:SS] anywhere
+        # Strips leading bullets, numbers, asterisks, markdown bold
+        ts_match = re.search(r'\[(\d{1,2}:\d{2}(?::\d{2})?(?:\s*-\s*\d{1,2}:\d{2}(?::\d{2})?)?)\]', line)
+        if ts_match and len(line) > 8:
+            # clean markdown formatting
+            clean = re.sub(r'^\s*[-*•]\s*', '', line)       # bullets
+            clean = re.sub(r'^\s*\d+[\.\)]\s*', '', clean)  # numbered lists
+            clean = re.sub(r'\*\*', '', clean)               # bold
+            clean = clean.strip()
+
+            sev = _normalize_severity(clean)
+            conf_match = re.search(r'[Cc]onfidence[:\s]+(\d+)', clean)
+            confidence = min(int(conf_match.group(1)), 100) if conf_match else _estimate_confidence(sev, clean)
+
+            # extract rule/category from context
+            rule = "Content flag"
+            clean_lower = clean.lower()
+            if any(w in clean_lower for w in ["music", "audio", "sound", "song"]):
+                rule = "Audio content"
+            elif any(w in clean_lower for w in ["logo", "brand", "trademark"]):
+                rule = "Brand/trademark"
+            elif any(w in clean_lower for w in ["talent", "face", "person", "actor"]):
+                rule = "Talent clearance"
+            elif any(w in clean_lower for w in ["alcohol", "drink", "beer", "wine"]):
+                rule = "Substance portrayal"
+            elif any(w in clean_lower for w in ["profan", "language", "speech", "slur"]):
+                rule = "Language/speech"
+            elif any(w in clean_lower for w in ["violen", "blood", "weapon", "gun"]):
+                rule = "Violence"
+            elif any(w in clean_lower for w in ["art", "painting", "sculpture", "design"]):
+                rule = "Artwork clearance"
+
+            findings.append({
+                "text": clean,
+                "severity": sev,
+                "confidence": confidence,
+                "source": "compliance",
+                "rule": rule,
+            })
+            i += 1
+            continue
+
+        i += 1
+
+    _helpers_log.info(f"Parsed {len(findings)} findings")
+    return findings
+
+
+def _normalize_severity(text):
+    t = text.upper()
+    if "CRITICAL" in t:
+        return "CRITICAL"
+    if "MAJOR" in t:
+        return "MAJOR"
+    return "MINOR"
+
+
+def _estimate_confidence(severity, description=""):
+    """Estimate confidence when not provided by the model.
+    Conservative defaults — only boost when language is definitive.
+    """
+    base = {"CRITICAL": 72, "MAJOR": 62, "MINOR": 50}.get(severity, 55)
+    desc_lower = (description or "").lower()
+    # only boost for very definitive language
+    if any(w in desc_lower for w in ["clearly", "confirmed", "detected", "identified"]):
+        base = min(base + 10, 90)
+    # penalize uncertain language
+    if any(w in desc_lower for w in ["possible", "may", "might", "appears", "potential", "unclear", "ambiguous"]):
+        base = max(base - 15, 30)
+    # penalize "clearance needed" / "review" which are speculative
+    if any(w in desc_lower for w in ["clearance needed", "review recommended", "needs review", "maybe"]):
+        base = max(base - 10, 35)
+    return base
+
+
+def parse_rights_from_report(report):
+    """Extract rights/clearance items from the compliance report.
+    Returns TWO things:
+    1. rights_entries — for the Rights Tracker tab (asset/type/expiry format)
+    2. rights_findings — in the same finding dict format as parse_findings (text/severity/confidence/source)
+    """
+    rights_entries = []
+    rights_findings = []
+    in_rights_section = False
+    lines = report.split("\n")
+    today = date.today()
+
+    for line in lines:
+        stripped = line.strip()
+        if "RIGHTS" in stripped.upper() and "CLEARANCE" in stripped.upper():
+            in_rights_section = True
+            continue
+        if in_rights_section and stripped.startswith("SECTION"):
+            break
+        if in_rights_section and stripped.startswith("["):
+            ts_match = re.search(r'\[[\d:]+(?:-[\d:]+)?\]', stripped)
+            ts_str = ts_match.group(0) if ts_match else ""
+            rest = re.sub(r'\[[\d:]+(?:-[\d:]+)?\]\s*', '', stripped)
+
+            # determine type
+            asset_type = "Other"
+            rest_lower = rest.lower()
+            if any(w in rest_lower for w in ["music", "track", "song", "audio", "jingle"]):
+                asset_type = "Music license"
+            elif any(w in rest_lower for w in ["logo", "brand", "trademark", "product"]):
+                asset_type = "Brand license"
+            elif any(w in rest_lower for w in ["talent", "face", "person", "actor", "performer"]):
+                asset_type = "Talent release"
+            elif any(w in rest_lower for w in ["artwork", "painting", "sculpture", "art"]):
+                asset_type = "Artwork clearance"
+            elif any(w in rest_lower for w in ["footage", "archive", "news", "clip"]):
+                asset_type = "Archive footage"
+
+            needs_clearance = "YES" in rest.upper() or "MAYBE" in rest.upper()
+            severity = "MAJOR" if needs_clearance else "MINOR"
+
+            # rights entry (for Rights Tracker tab)
+            rights_entries.append({
+                "asset": rest[:80],
+                "type": asset_type,
+                "expiry_date": (today + timedelta(days=30)).isoformat(),
+                "notes": f"Auto-detected. {'Clearance needed.' if needs_clearance else 'Review recommended.'}",
+                "added_at": datetime.now().isoformat(),
+                "auto_detected": True,
+            })
+
+            # unified finding (same format as compliance findings)
+            rights_findings.append({
+                "text": f"{ts_str} {rest}".strip(),
+                "severity": severity,
+                "confidence": 75 if needs_clearance else 60,
+                "source": "rights",
+                "asset_type": asset_type,
+                "rule": f"{asset_type} — {'clearance required' if needs_clearance else 'review recommended'}",
+            })
+
+    _helpers_log.info(f"Extracted {len(rights_entries)} rights entries, {len(rights_findings)} rights findings")
+    return rights_entries, rights_findings
+
+
+def severity_score(report):
+    """Compute a weighted severity score from a report, capped at 100."""
+    score = 0
+    score += report.count("CRITICAL") * 10
+    score += report.count("MAJOR") * 7
+    score += report.count("MINOR") * 3
+    return min(score, 100)
+
+
+def parse_timestamp_seconds(finding):
+    """Extract timestamp in seconds from a finding string or dict."""
+    text = finding["text"] if isinstance(finding, dict) else finding
+    try:
+        match = re.search(r'\[(\d+):(\d+)', text)
+        if match:
+            return int(match.group(1)) * 60 + int(match.group(2))
+    except Exception:
+        _helpers_log.error(f"parse_timestamp_seconds: failed to parse timestamp from text={text[:80]!r}", exc_info=True)
+    return 0
+
+
+def finding_text(finding):
+    """Get display text from a finding (dict or string)."""
+    if isinstance(finding, dict):
+        return finding.get("text", str(finding))
+    return finding
+
+
+def finding_severity(finding):
+    """Get severity from a finding (dict or string)."""
+    if isinstance(finding, dict):
+        return finding.get("severity", "MINOR")
+    return _normalize_severity(finding)
+
+
+def finding_confidence(finding):
+    """Get confidence from a finding (dict or string)."""
+    if isinstance(finding, dict):
+        return finding.get("confidence", 70)
+    return 70
+
+
+def log_feedback(finding, decision, video_id, ruleset, platforms, jurisdictions):
+    """Append a reviewer decision to the feedback log."""
+    f_text = finding_text(finding)
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "video_id": video_id,
+        "finding": f_text,
+        "decision": decision,
+        "ruleset": ruleset,
+        "platforms": platforms,
+        "jurisdictions": jurisdictions,
+    }
+    _helpers_log.info(f"Feedback logged: {decision} — {f_text[:60]}")
+    try:
+        with open("feedback_log.json", "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        _helpers_log.exception(f"log_feedback: failed to write feedback entry for video_id={video_id}, decision={decision}")
+
+
+def load_feedback_log():
+    try:
+        with open("feedback_log.json", "r") as f:
+            entries = []
+            for line_num, l in enumerate(f.readlines(), 1):
+                try:
+                    entries.append(json.loads(l))
+                except json.JSONDecodeError:
+                    _helpers_log.warning(f"load_feedback_log: skipping malformed JSON at line {line_num}: {l[:80]!r}")
+                    continue
+            return entries
+    except FileNotFoundError:
+        return []
+    except Exception:
+        _helpers_log.exception("load_feedback_log: unexpected error reading feedback_log.json")
+        return []
+
+
+def load_rights_log():
+    try:
+        with open("rights_log.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except Exception:
+        _helpers_log.exception("load_rights_log: failed to parse rights_log.json")
+        return []
+
+
+def save_rights_log(entries):
+    with open("rights_log.json", "w") as f:
+        json.dump(entries, f, indent=2, default=str)
+
+
+def get_expiring_rights(entries, days_ahead=30):
+    today = date.today()
+    expiring = []
+    for e in entries:
+        try:
+            exp = date.fromisoformat(e["expiry_date"])
+            delta = (exp - today).days
+            if delta <= days_ahead:
+                e["days_remaining"] = delta
+                expiring.append(e)
+        except Exception:
+            _helpers_log.warning(f"get_expiring_rights: failed to parse expiry_date for asset={e.get('asset', 'unknown')!r}, "
+                        f"expiry_date={e.get('expiry_date')!r}", exc_info=True)
+    return expiring
+
+
+def load_ground_truth():
+    try:
+        with open("ground_truth.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        _helpers_log.exception("load_ground_truth: failed to parse ground_truth.json")
+        return {}
+
+
+def save_ground_truth(data):
+    with open("ground_truth.json", "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def compute_metrics(ground_truth_violations, system_findings):
+    """Compare ground truth list against system findings list."""
+    # normalize findings to strings
+    sf_texts = [finding_text(f) for f in system_findings]
+
+    tp = 0
+    fp = 0
+    fn = 0
+    matched = set()
+
+    for gt in ground_truth_violations:
+        gt_lower = gt.lower()
+        found = False
+        for i, sf in enumerate(sf_texts):
+            if i not in matched:
+                gt_words = set(gt_lower.split())
+                sf_words = set(sf.lower().split())
+                overlap = gt_words & sf_words
+                if len(overlap) >= 2:
+                    tp += 1
+                    matched.add(i)
+                    found = True
+                    break
+        if not found:
+            fn += 1
+
+    fp = len(sf_texts) - len(matched)
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
+
+    return {
+        "tp": tp, "fp": fp, "fn": fn,
+        "precision": round(precision, 3),
+        "recall": round(recall, 3),
+        "f1": round(f1, 3),
+    }
+
+
+def build_prompt(ruleset_name, custom_rules, platforms, jurisdictions, audio_flags, include_rights):
+    """Build the compliance analysis prompt for TwelveLabs Pegasus."""
+    rules_list = list(RULESETS[ruleset_name]["rules"]) if ruleset_name != "Custom" else []
+    if custom_rules:
+        for r in custom_rules.split("\n"):
+            if r.strip():
+                rules_list.append(r.strip())
+
+    rules_text = "\n".join(f"- {r}" for r in rules_list)
+    platforms_text = ", ".join(platforms)
+
+    jurisdiction_blocks = []
+    for j in jurisdictions:
+        if j != "None" and JURISDICTIONS.get(j):
+            jurisdiction_blocks.append(f"{j}: {JURISDICTIONS[j]}")
+    jurisdiction_text = "\n".join(jurisdiction_blocks) if jurisdiction_blocks else "No specific jurisdiction selected."
+
+    audio_text = "\n".join(f"- {a}" for a in audio_flags) if audio_flags else "- General audio compliance check"
+
+    rights_section = """
+SECTION 3 - RIGHTS & CLEARANCES
+Identify ALL of the following requiring clearance:
+- On-screen artworks, paintings, sculptures, installations
+- Brand logos, trademarks, product packaging
+- Identifiable talent (faces visible, recognizable)
+- Background music, sound effects, jingles
+- Architectural works, set designs
+- News footage, archival material
+Format: [timestamp] [asset type] [description] [clearance needed: YES/MAYBE/NO]
+""" if include_rights else ""
+
+    return f"""You are a senior compliance reviewer. You MUST ONLY flag violations that match the specific rules listed below. Do NOT invent, infer, or speculate about violations not covered by these rules. If you are not confident a violation exists, do NOT report it. Only report what you can directly observe in the video.
+
+IMPORTANT CONSTRAINTS:
+- Only flag items that clearly violate a rule listed below
+- Confidence must reflect how certain you are: use 30-50 for uncertain, 50-70 for likely, 70-90 for clear, 90+ only for unambiguous
+- If a category has no violations, write: NOT DETECTED
+- Do NOT flag normal, compliant content
+- Do NOT flag things that "could potentially" be an issue — only flag what IS an issue
+
+TARGET PLATFORMS: {platforms_text}
+
+RULES TO CHECK ({ruleset_name}):
+{rules_text}
+
+AUDIO RULES TO CHECK:
+{audio_text}
+
+FORMAT — use this exact structure for every finding:
+
+SECTION 1 - CONTENT FLAGS
+For each violation of the rules above:
+[MM:SS] Description of exactly what is visible/audible — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
+
+SECTION 2 - AUDIO FLAGS
+For each audio violation:
+[MM:SS] Description of audio content — Rule violated — Severity: CRITICAL/MAJOR/MINOR — Confidence: N
+
+{rights_section}
+
+SECTION 4 - PLATFORM SUITABILITY
+For each platform in [{platforms_text}]:
+[platform]: APPROVED / FLAGGED / REJECTED — reason [timestamps if relevant]
+
+SECTION 5 - REGULATORY REVIEW
+{jurisdiction_text}
+For each jurisdiction: COMPLIANT / FLAG — specific rule — evidence
+
+SECTION 6 - OVERALL
+APPROVED FOR DISTRIBUTION / NEEDS REVIEW / REJECTED
+Risk: CRITICAL / HIGH / MEDIUM / LOW
+One paragraph summary for client."""
+
+
+# ══════════════════════════════════════════════════════════════
+# INLINED MODULE: styles.py
+# ══════════════════════════════════════════════════════════════
+
+"""All CSS styles for the Cleared compliance app — themed with CSS variables."""
+
+
+def get_app_css():
+    """Return the full application CSS with light/dark theme support via CSS variables."""
+    return """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+
+/* ── MATERIAL ICONS — NUCLEAR HIDE ──
+   Streamlit Cloud Python 3.14 doesn't load Material Icons font.
+   Hide ALL raw icon text completely and use CSS-only indicators. */
+.stApp span[data-icon],
+.stApp .material-symbols-rounded,
+.stApp [class*="Icon"] span,
+.stApp [data-testid*="Icon"] span,
+.stApp [data-testid*="icon"] span,
+.stApp [data-testid="stExpanderToggleIcon"],
+.stApp [data-testid="stExpanderToggleIcon"] *,
+.stApp [data-testid="stSidebarCollapseButton"] span,
+.stApp [data-testid="collapsedControl"] span,
+.stApp summary span[class*="icon"],
+.stApp details > summary > div > span:first-child,
+.stApp details > summary span[aria-hidden] {
+    font-size: 0 !important;
+    color: transparent !important;
+    overflow: hidden !important;
+    display: inline-block !important;
+    width: 16px !important;
+    height: 16px !important;
+    line-height: 0 !important;
+    vertical-align: middle !important;
+    text-indent: -9999px !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   THEME VARIABLES
+   ══════════════════════════════════════════════════════ */
+
+/* ── LIGHT (default) ── */
+:root {
+    --bg-primary: #f8f9fa;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #f3f4f6;
+    --bg-input: #ffffff;
+    --bg-hover: #f9fafb;
+    --bg-btn-primary: #111827;
+    --bg-btn-primary-hover: #1f2937;
+
+    --border: #d1d5db;
+    --border-light: #e5e7eb;
+
+    --text-primary: #111827;
+    --text-secondary: #374151;
+    --text-tertiary: #6b7280;
+    --text-muted: #9ca3af;
+    --text-on-primary: #ffffff;
+
+    --accent: #111827;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+
+    --risk-critical-bg: #fef2f2; --risk-critical-border: #fecaca; --risk-critical-accent: #dc2626; --risk-critical-text: #991b1b;
+    --risk-high-bg: #fff7ed; --risk-high-border: #fed7aa; --risk-high-accent: #ea580c; --risk-high-text: #9a3412;
+    --risk-medium-bg: #fffbeb; --risk-medium-border: #fde68a; --risk-medium-accent: #d97706; --risk-medium-text: #92400e;
+    --risk-low-bg: #f0fdf4; --risk-low-border: #bbf7d0; --risk-low-accent: #16a34a; --risk-low-text: #166534;
+
+    --tag-1-bg: #f0fdf4; --tag-1-border: #bbf7d0; --tag-1-text: #166534;
+    --tag-2-bg: #eff6ff; --tag-2-border: #bfdbfe; --tag-2-text: #1e40af;
+    --tag-3-bg: #faf5ff; --tag-3-border: #e9d5ff; --tag-3-text: #6b21a8;
+
+    --success-bg: #f0fdf4; --success-border: #bbf7d0; --success-text: #166534;
+    --error-bg: #fef2f2; --error-border: #fecaca; --error-text: #991b1b;
+    --warn-bg: #fffbeb; --warn-border: #fde68a; --warn-text: #92400e;
+    --info-bg: #eff6ff; --info-border: #bfdbfe; --info-text: #1e40af;
+
+    --ltx-bg: #faf5ff; --ltx-border: #e9d5ff;
+    --overlay-bg: rgba(248,249,250,0.92);
+}
+
+/* ── DARK ── */
+.dark-mode {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #111111;
+    --bg-tertiary: #1a1a1a;
+    --bg-input: #141414;
+    --bg-hover: #1a1a1a;
+    --bg-btn-primary: #e5e7eb;
+    --bg-btn-primary-hover: #d1d5db;
+
+    --border: #2a2a2a;
+    --border-light: #1f1f1f;
+
+    --text-primary: #e5e7eb;
+    --text-secondary: #d1d5db;
+    --text-tertiary: #9ca3af;
+    --text-muted: #6b7280;
+    --text-on-primary: #0a0a0a;
+
+    --accent: #e5e7eb;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+
+    --risk-critical-bg: rgba(220,38,38,0.1); --risk-critical-border: #7f1d1d; --risk-critical-accent: #ef4444; --risk-critical-text: #fca5a5;
+    --risk-high-bg: rgba(234,88,12,0.1); --risk-high-border: #7c2d12; --risk-high-accent: #f97316; --risk-high-text: #fdba74;
+    --risk-medium-bg: rgba(217,119,6,0.1); --risk-medium-border: #78350f; --risk-medium-accent: #f59e0b; --risk-medium-text: #fde68a;
+    --risk-low-bg: rgba(22,163,74,0.08); --risk-low-border: #14532d; --risk-low-accent: #22c55e; --risk-low-text: #86efac;
+
+    --tag-1-bg: rgba(22,163,74,0.1); --tag-1-border: #14532d; --tag-1-text: #86efac;
+    --tag-2-bg: rgba(37,99,235,0.1); --tag-2-border: #1e3a5f; --tag-2-text: #93c5fd;
+    --tag-3-bg: rgba(124,58,237,0.1); --tag-3-border: #3b0764; --tag-3-text: #c4b5fd;
+
+    --success-bg: rgba(22,163,74,0.1); --success-border: #14532d; --success-text: #86efac;
+    --error-bg: rgba(220,38,38,0.1); --error-border: #7f1d1d; --error-text: #fca5a5;
+    --warn-bg: rgba(217,119,6,0.1); --warn-border: #78350f; --warn-text: #fde68a;
+    --info-bg: rgba(37,99,235,0.1); --info-border: #1e3a5f; --info-text: #93c5fd;
+
+    --ltx-bg: rgba(124,58,237,0.06); --ltx-border: #3b0764;
+    --overlay-bg: rgba(10,10,10,0.92);
+}
+
+/* ══════════════════════════════════════════════════════
+   COMPONENTS
+   ══════════════════════════════════════════════════════ */
+
+/* ── BASE — force font everywhere ── */
+html, body, [class*="css"], [class*="st-"],
+.stApp, .stApp *, .stApp p, .stApp span, .stApp div, .stApp label, .stApp input,
+.stApp textarea, .stApp select, .stApp button, .stApp a,
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stApp [data-baseweb], .stApp [data-testid],
+section[data-testid="stSidebar"], section[data-testid="stSidebar"] * {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace !important;
+}
+.stApp {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    transition: background-color 0.2s, color 0.2s !important;
+}
+
+/* ── TYPOGRAPHY ── */
+.stApp h1 {
+    font-weight: 700 !important;
+    color: var(--text-primary) !important;
+    font-size: 2.4rem !important;
+    letter-spacing: -0.02em !important;
+    margin-bottom: 0 !important;
+}
+/* sidebar logo specifically */
+.stApp section[data-testid="stSidebar"] h1 {
+    font-size: 2.4rem !important;
+}
+.stApp h2 {
+    color: var(--text-primary) !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    font-weight: 600 !important;
+}
+.stApp h3 {
+    color: var(--text-secondary) !important;
+    font-size: 0.7rem !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    font-weight: 600 !important;
+}
+
+/* ── TEXT ── */
+.stApp .stMarkdown p { color: var(--text-secondary) !important; font-size: 0.85rem !important; line-height: 1.7 !important; }
+.stApp .stCaption, .stApp .stCaption p { color: var(--text-muted) !important; font-size: 0.72rem !important; }
+.stApp hr { border-color: var(--border-light) !important; margin: 1rem 0 !important; }
+
+/* ── SIDEBAR ── */
+section[data-testid="stSidebar"] {
+    background: var(--bg-secondary) !important;
+    border-right: 1px solid var(--border-light) !important;
+}
+section[data-testid="stSidebar"] > div:first-child {
+    padding-top: 0.25rem !important;
+}
+/* kill the collapse arrow gap and hide raw icon text */
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapsedControl"],
+section[data-testid="stSidebar"] button[kind="header"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="collapsedControl"] {
+    position: absolute !important;
+    top: 0.25rem !important;
+    right: 0.25rem !important;
+    z-index: 999 !important;
+    padding: 0.25rem !important;
+    margin: 0 !important;
+    font-size: 0 !important;
+    overflow: hidden !important;
+    width: 24px !important;
+    height: 24px !important;
+    line-height: 0 !important;
+}
+/* hide the raw "keyboard_double_arrow" text from material icons */
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] span,
+section[data-testid="stSidebar"] [data-testid="collapsedControl"] span,
+[data-testid="stSidebarNavCollapseIcon"],
+[data-testid="stSidebarCollapseButton"] *,
+[data-testid="collapsedControl"] * {
+    font-size: 0 !important;
+    color: transparent !important;
+    overflow: hidden !important;
+    width: 24px !important;
+    height: 24px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] svg,
+section[data-testid="stSidebar"] [data-testid="collapsedControl"] svg {
+    font-size: 1rem !important;
+    width: 18px !important;
+    height: 18px !important;
+    fill: var(--text-muted) !important;
+    color: var(--text-muted) !important;
+}
+/* NUKE all sidebar top spacing — every possible source */
+section[data-testid="stSidebar"] .block-container,
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"],
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] > div > div,
+section[data-testid="stSidebar"] > div > div > div,
+section[data-testid="stSidebar"] > div:first-child > div:first-child {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+/* hide the sidebar nav header if empty */
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {
+    display: none !important;
+}
+/* hide the sidebar header/decoration area */
+section[data-testid="stSidebar"] [data-testid="stSidebarHeader"],
+section[data-testid="stSidebar"] header {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+section[data-testid="stSidebar"] .stMarkdown p {
+    color: var(--text-tertiary) !important;
+    font-size: 0.75rem !important;
+}
+section[data-testid="stSidebar"] label {
+    color: var(--text-secondary) !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+}
+section[data-testid="stSidebar"] .stCaption,
+section[data-testid="stSidebar"] .stCaption p {
+    color: var(--text-muted) !important;
+    font-size: 0.72rem !important;
+}
+
+/* ── INPUTS ── */
+.stApp .stTextInput input, .stApp .stTextArea textarea,
+.stApp [data-testid="stTextInput"] input, .stApp [data-testid="stTextArea"] textarea {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-primary) !important;
+    border-radius: 6px !important;
+    font-size: 0.82rem !important;
+}
+.stApp .stTextInput input:focus, .stApp .stTextArea textarea:focus {
+    border-color: var(--text-tertiary) !important;
+    box-shadow: 0 0 0 2px rgba(107,114,128,0.15) !important;
+}
+.stApp .stTextInput input::placeholder, .stApp .stTextArea textarea::placeholder {
+    color: var(--text-muted) !important;
+}
+
+/* ── SELECTS ── */
+.stApp .stSelectbox [data-baseweb="select"] > div,
+.stApp .stMultiSelect [data-baseweb="select"] > div {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--text-primary) !important;
+}
+.stApp .stSelectbox [data-baseweb="select"] span,
+.stApp .stMultiSelect [data-baseweb="select"] span,
+.stApp .stSelectbox [data-baseweb="select"] [data-baseweb="select-value"] *,
+.stApp .stMultiSelect [data-baseweb="select"] [data-baseweb="select-value"] * {
+    color: var(--text-primary) !important;
+}
+.stApp .stSelectbox svg, .stApp .stMultiSelect svg {
+    fill: var(--text-tertiary) !important;
+}
+.stApp [data-baseweb="popover"] {
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    box-shadow: var(--shadow-md) !important;
+}
+.stApp [data-baseweb="menu"] { background: var(--bg-secondary) !important; }
+.stApp [data-baseweb="menu"] li, .stApp [role="option"] {
+    color: var(--text-primary) !important;
+    background: var(--bg-secondary) !important;
+    font-size: 0.82rem !important;
+}
+.stApp [role="option"]:hover, .stApp [data-baseweb="menu"] li:hover,
+.stApp [role="option"][aria-selected="true"] {
+    background: var(--bg-tertiary) !important;
+}
+
+/* ── MULTISELECT TAGS ── */
+.stApp .stMultiSelect span[data-baseweb="tag"] {
+    background: var(--tag-1-bg) !important;
+    border: 1px solid var(--tag-1-border) !important;
+    border-radius: 4px !important;
+    color: var(--tag-1-text) !important;
+    font-size: 0.68rem !important;
+    font-weight: 500 !important;
+}
+.stApp .stMultiSelect span[data-baseweb="tag"]:nth-child(3n+2) {
+    background: var(--tag-2-bg) !important;
+    border-color: var(--tag-2-border) !important;
+    color: var(--tag-2-text) !important;
+}
+.stApp .stMultiSelect span[data-baseweb="tag"]:nth-child(3n+3) {
+    background: var(--tag-3-bg) !important;
+    border-color: var(--tag-3-border) !important;
+    color: var(--tag-3-text) !important;
+}
+.stApp .stMultiSelect span[data-baseweb="tag"] span[role="presentation"] { color: inherit !important; }
+.stApp .stMultiSelect span[data-baseweb="tag"] span { color: inherit !important; }
+.stApp .stMultiSelect [data-baseweb="clear-icon"] { color: var(--text-muted) !important; }
+
+/* ── CHECKBOX ── */
+.stApp .stCheckbox label,
+.stApp .stCheckbox label span { color: var(--text-secondary) !important; font-size: 0.8rem !important; font-weight: 500 !important; }
+
+/* ── RADIO ── */
+.stApp .stRadio label,
+.stApp .stRadio label span,
+.stApp [data-testid="stRadio"] label span { color: var(--text-secondary) !important; }
+
+/* ── FILE UPLOADER ── */
+.stApp .stFileUploader,
+.stApp [data-testid="stFileUploader"] {
+    background: var(--bg-secondary) !important;
+    border: 1px dashed var(--border) !important;
+    border-radius: 6px !important;
+}
+.stApp .stFileUploader label,
+.stApp .stFileUploader p,
+.stApp .stFileUploader span,
+.stApp [data-testid="stFileUploader"] * {
+    color: var(--text-secondary) !important;
+}
+
+/* ── EXPANDER ── */
+.stApp .stExpander,
+.stApp [data-testid="stExpander"] {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: 6px !important;
+    overflow: visible !important;
+}
+.stApp .stExpander summary,
+.stApp .stExpander summary span,
+.stApp [data-testid="stExpander"] summary span {
+    color: var(--text-secondary) !important;
+}
+/* nuclear fix: hide ALL raw icon text in expanders */
+.stApp .stExpander [data-testid="stExpanderToggleIcon"],
+.stApp [data-testid="stExpander"] [data-testid="stExpanderToggleIcon"],
+.stApp details summary > span:first-child,
+.stApp .stExpander summary > div > span:first-child {
+    font-size: 0 !important;
+    overflow: hidden !important;
+    width: 16px !important;
+    height: 16px !important;
+    display: inline-block !important;
+    position: relative !important;
+}
+/* CSS triangle fallback when icon font fails */
+.stApp .stExpander [data-testid="stExpanderToggleIcon"]::before,
+.stApp details summary > span:first-child::before {
+    content: "" !important;
+    display: block !important;
+    width: 0 !important;
+    height: 0 !important;
+    border-left: 5px solid var(--text-muted) !important;
+    border-top: 4px solid transparent !important;
+    border-bottom: 4px solid transparent !important;
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+}
+.stApp details[open] summary > span:first-child::before,
+.stApp .stExpander[open] [data-testid="stExpanderToggleIcon"]::before {
+    border-left: 4px solid transparent !important;
+    border-right: 4px solid transparent !important;
+    border-top: 5px solid var(--text-muted) !important;
+    border-bottom: none !important;
+}
+.stApp .stExpander [data-testid="stExpanderToggleIcon"] svg {
+    font-size: 1rem !important;
+    width: 1rem !important;
+    height: 1rem !important;
+    fill: var(--text-muted) !important;
+}
+/* prevent expander content from overlapping siblings */
+.stApp .stExpander [data-testid="stExpanderDetails"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+/* sidebar "All" buttons — small inline pill */
+.stApp section[data-testid="stSidebar"] .stButton > button {
+    padding: 0.2rem 0.5rem !important;
+    font-size: 0.6rem !important;
+    min-height: unset !important;
+    height: auto !important;
+    letter-spacing: 0.06em !important;
+}
+
+/* sidebar expander specific fixes */
+.stApp section[data-testid="stSidebar"] .stExpander {
+    margin-bottom: 0.5rem !important;
+}
+.stApp section[data-testid="stSidebar"] .stExpander summary {
+    padding: 0.5rem 0.75rem !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+}
+
+/* ── DATE INPUT ── */
+.stApp .stDateInput input,
+.stApp [data-testid="stDateInput"] input {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-primary) !important;
+    border-radius: 6px !important;
+}
+
+/* ── BUTTONS ── */
+.stApp .stButton > button {
+    background: var(--bg-secondary) !important;
+    color: var(--text-secondary) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 0.75rem !important;
+    letter-spacing: 0.02em !important;
+    transition: all 0.15s ease !important;
+}
+.stApp .stButton > button:hover {
+    background: var(--bg-hover) !important;
+    border-color: var(--text-muted) !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+.stApp .stButton > button[kind="primary"],
+.stApp section[data-testid="stSidebar"] .stButton > button {
+    background: var(--bg-btn-primary) !important;
+    color: var(--text-on-primary) !important;
+    border-color: var(--bg-btn-primary) !important;
+}
+.stApp section[data-testid="stSidebar"] .stButton > button:hover {
+    background: var(--bg-btn-primary-hover) !important;
+    box-shadow: var(--shadow-md) !important;
+}
+.stApp .stDownloadButton > button {
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-secondary) !important;
+    font-size: 0.72rem !important;
+    font-weight: 500 !important;
+    border-radius: 6px !important;
+}
+.stApp .stDownloadButton > button:hover { border-color: var(--text-tertiary) !important; color: var(--text-primary) !important; }
+
+/* ── TABS ── */
+.stApp .stTabs [data-baseweb="tab-list"] {
+    position: sticky !important;
+    top: 44px !important;
+    z-index: 998 !important;
+    background: var(--bg-primary) !important;
+    border-bottom: 1px solid var(--border-light) !important;
+    gap: 0 !important;
+}
+.stApp .stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: var(--text-muted) !important;
+    font-size: 0.65rem !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    font-weight: 500 !important;
+    border-bottom: 2px solid transparent !important;
+    padding: 0.6rem 1rem !important;
+}
+.stApp .stTabs [data-baseweb="tab"]:hover { color: var(--text-secondary) !important; }
+.stApp .stTabs [aria-selected="true"] {
+    color: var(--text-primary) !important;
+    border-bottom: 2px solid var(--accent) !important;
+    font-weight: 700 !important;
+}
+/* override Streamlit's tab highlight bar */
+.stApp .stTabs [data-baseweb="tab-highlight"] {
+    background-color: var(--accent) !important;
+}
+.stApp .stTabs [data-baseweb="tab-border"] {
+    background-color: var(--border-light) !important;
+}
+
+/* ── ALERTS ── */
+.stApp .stSuccess > div { background: var(--success-bg) !important; border: 1px solid var(--success-border) !important; border-radius: 6px !important; color: var(--success-text) !important; }
+.stApp .stSuccess > div p { color: var(--success-text) !important; }
+.stApp .stError > div { background: var(--error-bg) !important; border: 1px solid var(--error-border) !important; border-radius: 6px !important; color: var(--error-text) !important; }
+.stApp .stError > div p { color: var(--error-text) !important; }
+.stApp .stWarning > div { background: var(--warn-bg) !important; border: 1px solid var(--warn-border) !important; border-radius: 6px !important; color: var(--warn-text) !important; }
+.stApp .stWarning > div p { color: var(--warn-text) !important; }
+.stApp .stInfo > div { background: var(--info-bg) !important; border: 1px solid var(--info-border) !important; border-radius: 6px !important; color: var(--info-text) !important; }
+.stApp .stInfo > div p { color: var(--info-text) !important; }
+
+/* ── SPINNER ── */
+.stSpinner > div {
+    border: 3px solid var(--border-light) !important;
+    border-top-color: var(--accent) !important;
+    border-radius: 50% !important;
+    width: 28px; height: 28px;
+    animation: cleared-spin 0.75s linear infinite !important;
+}
+.stSpinner > div > * { display: none !important; }
+@keyframes cleared-spin { to { transform: rotate(360deg); } }
+
+/* ── LAYOUT ── */
+.stApp [data-testid="stCustomComponentV1"] {
+    margin-bottom: -2rem !important; padding-bottom: 0 !important; line-height: 0 !important;
+}
+.stApp iframe { display: block !important; margin-bottom: 0 !important; }
+.stApp .stTabs { margin-top: 0 !important; }
+.stApp [data-testid="stCustomComponentV1"] > div { padding-bottom: 0 !important; }
+
+/* ── STREAMLIT TOP BAR (Share/Deploy) ── */
+.stApp header[data-testid="stHeader"],
+.stApp [data-testid="stHeader"],
+.stApp [data-testid="stToolbar"],
+.stApp header {
+    height: 1.5rem !important;
+    min-height: 1.5rem !important;
+    max-height: 1.5rem !important;
+    padding: 0 !important;
+    background: var(--bg-primary) !important;
+}
+.stApp header[data-testid="stHeader"] *,
+.stApp [data-testid="stHeader"] *,
+.stApp [data-testid="stToolbar"] *,
+.stApp [data-testid="stToolbar"] button,
+.stApp [data-testid="stToolbar"] a,
+.stApp [data-testid="stToolbar"] span,
+.stApp header button, .stApp header a, .stApp header span {
+    color: #e0e0e0 !important;
+    fill: #e0e0e0 !important;
+    opacity: 0.4 !important;
+    font-size: 0.6rem !important;
+}
+.stApp [data-testid="stToolbar"] button:hover,
+.stApp [data-testid="stToolbar"] a:hover,
+.stApp header button:hover, .stApp header a:hover {
+    opacity: 0.8 !important;
+}
+
+/* ── SCROLLABLE TABS CONTAINER ── */
+.stApp section.main > div.block-container { padding-top: 0 !important; max-width: 100% !important; }
+
+/* ── PROGRESS BAR ── */
+.stApp .stProgress > div > div { background: var(--bg-tertiary) !important; border-radius: 4px !important; }
+.stApp .stProgress > div > div > div { background: var(--accent) !important; border-radius: 4px !important; }
+
+/* ── TOOLTIPS ── */
+.stApp [data-baseweb="tooltip"] { background: var(--bg-secondary) !important; color: var(--text-primary) !important; border: 1px solid var(--border) !important; }
+.scrollable-findings {
+    max-height: calc(100vh - 560px);
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+.scrollable-findings::-webkit-scrollbar { width: 4px; }
+.scrollable-findings::-webkit-scrollbar-track { background: var(--bg-primary); }
+.scrollable-findings::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.scrollable-findings::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── FINDING ACTION BUTTONS ── */
+.stApp .finding-actions {
+    display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; margin-bottom: 0.25rem;
+}
+.stApp .finding-actions .stButton > button {
+    padding: 0.25rem 0.65rem !important; font-size: 0.62rem !important;
+    min-height: unset !important; height: auto !important;
+    letter-spacing: 0.04em !important; border-radius: 4px !important;
+}
+.stApp .btn-seek .stButton > button {
+    background: var(--bg-tertiary) !important; color: var(--text-primary) !important;
+    border: 1px solid var(--border) !important; font-weight: 700 !important;
+}
+.stApp .btn-approve .stButton > button {
+    background: var(--risk-low-bg) !important; color: var(--risk-low-text) !important;
+    border: 1px solid var(--risk-low-border) !important;
+}
+.stApp .btn-reject .stButton > button {
+    background: var(--risk-critical-bg) !important; color: var(--risk-critical-text) !important;
+    border: 1px solid var(--risk-critical-border) !important;
+}
+.stApp .btn-escalate .stButton > button {
+    background: var(--risk-medium-bg) !important; color: var(--risk-medium-text) !important;
+    border: 1px solid var(--risk-medium-border) !important;
+}
+.stApp .btn-blur .stButton > button, .stApp .btn-bleep .stButton > button {
+    background: var(--info-bg) !important; color: var(--info-text) !important;
+    border: 1px solid var(--info-border) !important;
+}
+.stApp .btn-ai .stButton > button {
+    background: var(--ltx-bg) !important; color: #7c3aed !important;
+    border: 1px solid var(--ltx-border) !important;
+}
+[data-baseweb="no-results"] { display: none !important; }
+ul[data-baseweb="menu"] li:only-child[aria-disabled="true"] { display: none !important; }
+ul[data-baseweb="menu"]:empty { display: none !important; }
+[data-baseweb="popover"] ul[data-baseweb="menu"]:has(li:only-child[aria-disabled="true"]) { display: none !important; }
+[data-baseweb="popover"]:has([data-baseweb="no-results"]) { display: none !important; }
+[data-baseweb="popover"]:has(ul[data-baseweb="menu"] li:only-child[aria-disabled="true"]) { display: none !important; }
+
+/* ── RISK BANNERS ── */
+.risk-critical { background: var(--risk-critical-bg); border: 1px solid var(--risk-critical-border); border-left: 4px solid var(--risk-critical-accent); border-radius: 6px; padding: 0.75rem 1.25rem; color: var(--risk-critical-text); font-size: 0.8rem; font-weight: 600; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; }
+.risk-high { background: var(--risk-high-bg); border: 1px solid var(--risk-high-border); border-left: 4px solid var(--risk-high-accent); border-radius: 6px; padding: 0.75rem 1.25rem; color: var(--risk-high-text); font-size: 0.8rem; font-weight: 600; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; }
+.risk-medium { background: var(--risk-medium-bg); border: 1px solid var(--risk-medium-border); border-left: 4px solid var(--risk-medium-accent); border-radius: 6px; padding: 0.75rem 1.25rem; color: var(--risk-medium-text); font-size: 0.8rem; font-weight: 600; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; }
+.risk-low { background: var(--risk-low-bg); border: 1px solid var(--risk-low-border); border-left: 4px solid var(--risk-low-accent); border-radius: 6px; padding: 0.75rem 1.25rem; color: var(--risk-low-text); font-size: 0.8rem; font-weight: 600; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; }
+
+/* ── FINDING CARDS ── */
+.finding-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 0.85rem 1rem; margin-bottom: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); line-height: 1.6; box-shadow: var(--shadow-sm); }
+.finding-critical { border-left: 4px solid var(--risk-critical-accent); }
+.finding-major { border-left: 4px solid var(--risk-high-accent); }
+.finding-minor { border-left: 4px solid #2563eb; }
+
+/* ── META ── */
+.meta-label { font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.2rem; font-weight: 600; }
+.meta-value-pink { color: #be185d; font-size: 1.1rem; font-weight: 700; }
+.meta-value-lavender { color: #7c3aed; font-size: 1.1rem; font-weight: 700; }
+.meta-value-mint { color: #059669; font-size: 1.1rem; font-weight: 700; }
+.meta-value-peach { color: #2563eb; font-size: 1.1rem; font-weight: 700; }
+
+/* ── PANELS ── */
+.ltx-panel { background: var(--ltx-bg); border: 1px solid var(--ltx-border); border-radius: 6px; padding: 1rem 1.25rem; margin-top: 0.75rem; }
+.rights-expiring { background: var(--risk-high-bg); border: 1px solid var(--risk-high-border); border-radius: 6px; padding: 0.6rem 0.85rem; margin-bottom: 0.4rem; font-size: 0.78rem; color: var(--risk-high-text); font-weight: 500; }
+.rights-ok { background: var(--risk-low-bg); border: 1px solid var(--risk-low-border); border-radius: 6px; padding: 0.6rem 0.85rem; margin-bottom: 0.4rem; font-size: 0.78rem; color: var(--text-muted); }
+.metric-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 8px; padding: 1.25rem; text-align: center; box-shadow: var(--shadow-sm); }
+.metric-number { font-size: 2rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--text-primary); }
+.metric-label { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-top: 0.25rem; font-weight: 500; }
+.section-divider { border: none; border-top: 1px solid var(--border-light); margin: 0.75rem 0; }
+
+/* ── THEME TOGGLE ── */
+.theme-toggle {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.35rem 0.75rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+    user-select: none;
+}
+.theme-toggle:hover { border-color: var(--text-muted); color: var(--text-primary); }
+</style>
+"""
+
+
+def get_loading_overlay():
+    return """
+<div style="position:fixed;inset:0;background:var(--overlay-bg, rgba(248,249,250,0.92));z-index:9999;
+     display:flex;flex-direction:column;align-items:center;justify-content:center;
+     backdrop-filter:blur(8px);">
+  <div style="width:48px;height:48px;border-radius:50%;
+       border:4px solid var(--border-light, #e5e7eb);
+       border-top-color:var(--accent, #111827);
+       animation:cleared-spin 0.75s linear infinite;">
+  </div>
+  <div style="color:var(--text-primary, #111827);font-family:'JetBrains Mono',monospace;font-size:0.85rem;
+       font-weight:600;margin-top:1.5rem;letter-spacing:0.02em;">
+    Analyzing with Pegasus
+  </div>
+  <div style="color:var(--text-muted, #6b7280);font-family:'JetBrains Mono',monospace;font-size:0.72rem;
+       margin-top:0.35rem;letter-spacing:0.02em;">
+    This may take a minute
+  </div>
+</div>
+<style>@keyframes cleared-spin { to { transform: rotate(360deg); } }</style>
+"""
+
+
+# Keep backwards compat
+LOADING_OVERLAY = get_loading_overlay()
+
+
+THEME_TOGGLE_JS = """
+<script>
+function toggleTheme() {
+    const app = document.querySelector('.stApp');
+    if (!app) return;
+    const isDark = app.classList.toggle('dark-mode');
+    localStorage.setItem('cleared-theme', isDark ? 'dark' : 'light');
+}
+// restore saved theme on load
+(function() {
+    const saved = localStorage.getItem('cleared-theme');
+    if (saved === 'dark') {
+        const app = document.querySelector('.stApp');
+        if (app) app.classList.add('dark-mode');
+    }
+})();
+</script>
+"""
+
+
+# ══════════════════════════════════════════════════════════════
+# INLINED MODULE: bedrock_client.py
+# ══════════════════════════════════════════════════════════════
+
+"""Bedrock wrapper for TwelveLabs Pegasus (analysis) and Marengo (search/retrieval).
+
+All model inference goes through this module. No TwelveLabs SDK for model calls.
+Video input is S3 URI or local file path.
+"""
+
+_bedrock_log = logging.getLogger("cleared.bedrock")
+
+# Bedrock model IDs
+PEGASUS_MODEL_ID = "us.twelvelabs.pegasus-1-2-v1:0"
+MARENGO_MODEL_ID = "us.twelvelabs.marengo-embed-2-7-v1:0"
+
+_bedrock_client = None
+_s3_client = None
+
+S3_BUCKET = os.environ.get("CLEARED_S3_BUCKET", "cleared-compliance-videos")
+S3_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+
+
+def _get_bedrock():
+    """Lazy-init Bedrock runtime client."""
+    global _bedrock_client
+    if _bedrock_client:
+        return _bedrock_client
+    try:
+        import boto3
+        _bedrock_client = boto3.client(
+            "bedrock-runtime",
+            region_name=S3_REGION,
+        )
+        _bedrock_log.info(f"Bedrock client initialized (region={S3_REGION})")
+        return _bedrock_client
+    except Exception as e:
+        _bedrock_log.exception(f"Bedrock init failed (region={S3_REGION})")
+        return None
+
+
+def _get_s3():
+    """Lazy-init S3 client."""
+    global _s3_client
+    if _s3_client:
+        return _s3_client
+    try:
+        import boto3
+        _s3_client = boto3.client("s3", region_name=S3_REGION)
+        _bedrock_log.info("S3 client initialized")
+        return _s3_client
+    except Exception as e:
+        _bedrock_log.exception(f"S3 client init failed (region={S3_REGION})")
+        return None
+
+
+def is_bedrock_available():
+    """Check if AWS credentials are configured."""
+    return bool(os.environ.get("AWS_ACCESS_KEY_ID")) and bool(os.environ.get("AWS_SECRET_ACCESS_KEY"))
+
+
+def upload_to_s3(file_bytes, filename):
+    """Upload video bytes to S3. Returns s3:// URI."""
+    s3 = _get_s3()
+    if not s3:
+        _bedrock_log.error("S3 client not available")
+        return None
+    try:
+        key = f"uploads/{filename}"
+        s3.put_object(Bucket=S3_BUCKET, Key=key, Body=file_bytes)
+        uri = f"s3://{S3_BUCKET}/{key}"
+        _bedrock_log.info(f"Uploaded to S3: {uri}")
+        return uri
+    except Exception as e:
+        _bedrock_log.exception(f"S3 upload failed for filename={filename}, bucket={S3_BUCKET}")
+        return None
+
+
+def get_s3_presigned_url(s3_uri, expires_in=3600):
+    """Generate a presigned URL for video playback from S3 URI."""
+    s3 = _get_s3()
+    if not s3:
+        _bedrock_log.error("get_s3_presigned_url: S3 client not available")
+        return None
+    if not s3_uri:
+        _bedrock_log.error("get_s3_presigned_url: no s3_uri provided")
+        return None
+    try:
+        # parse s3://bucket/key
+        parts = s3_uri.replace("s3://", "").split("/", 1)
+        bucket = parts[0]
+        key = parts[1] if len(parts) > 1 else ""
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+        _bedrock_log.info(f"Presigned URL generated for {s3_uri[:50]}...")
+        return url
+    except Exception as e:
+        _bedrock_log.exception(f"Presigned URL generation failed for s3_uri={s3_uri}")
+        return None
+
+
+# ── PEGASUS: Video Analysis ──────────────────────────────────
+
+def run_pegasus_analysis(video_s3_uri=None, video_bytes=None, prompt=""):
+    """Run Pegasus analysis via Bedrock.
+
+    Accepts either:
+    - video_s3_uri: s3://bucket/key reference
+    - video_bytes: raw bytes (will be base64 encoded)
+
+    Returns: report text string, or None on failure.
+    """
+    bedrock = _get_bedrock()
+    if not bedrock:
+        _bedrock_log.error("run_pegasus_analysis: Bedrock client not available, cannot run analysis")
+        return None
+
+    try:
+        # build mediaSource — top-level, not nested under "video"
+        if video_s3_uri:
+            s3_location = {"uri": video_s3_uri}
+            account_id = os.environ.get("AWS_ACCOUNT_ID", "")
+            if account_id:
+                s3_location["bucketOwner"] = account_id
+            else:
+                _bedrock_log.warning("AWS_ACCOUNT_ID not set — omitting bucketOwner from Pegasus request")
+            media_source = {"s3Location": s3_location}
+            _bedrock_log.info(f"Pegasus input: S3 URI {video_s3_uri[:60]}")
+        elif video_bytes:
+            video_b64 = base64.b64encode(video_bytes).decode("utf-8")
+            media_source = {"base64String": video_b64}
+            _bedrock_log.info(f"Pegasus input: base64 ({len(video_bytes)} bytes)")
+        else:
+            _bedrock_log.error("No video input provided")
+            return None
+
+        request_body = {
+            "inputPrompt": prompt,
+            "mediaSource": media_source,
+            "temperature": 0,
+        }
+
+        _bedrock_log.info(f"Invoking Bedrock Pegasus ({PEGASUS_MODEL_ID})...")
+        response = bedrock.invoke_model(
+            modelId=PEGASUS_MODEL_ID,
+            body=json.dumps(request_body),
+            contentType="application/json",
+            accept="application/json",
+        )
+
+        response_body = json.loads(response["body"].read())
+        _bedrock_log.info(f"Pegasus response: {len(str(response_body))} chars")
+
+        # extract text from response
+        return _extract_text(response_body)
+
+    except Exception as e:
+        _bedrock_log.exception(f"Pegasus analysis failed (model={PEGASUS_MODEL_ID}, s3_uri={video_s3_uri}, has_bytes={video_bytes is not None})")
+        return None
+
+
+# ── MARENGO: Semantic Search / Retrieval ─────────────────────
+
+def search_with_marengo(video_s3_uri=None, video_bytes=None, query="", embedding_options=None):
+    """Run Marengo semantic search/embedding via Bedrock.
+
+    Use for:
+    - Finding specific scenes/moments in video
+    - Semantic retrieval of relevant segments
+    - Video similarity/classification
+
+    Returns: embedding results or search matches, or None on failure.
+    """
+    bedrock = _get_bedrock()
+    if not bedrock:
+        _bedrock_log.error("search_with_marengo: Bedrock client not available")
+        return None
+
+    try:
+        if embedding_options is None:
+            embedding_options = ["visual-text", "audio"]
+
+        if video_s3_uri:
+            s3_loc = {"uri": video_s3_uri}
+            acct = os.environ.get("AWS_ACCOUNT_ID", "")
+            if acct:
+                s3_loc["bucketOwner"] = acct
+            video_input = {"s3Location": s3_loc}
+            input_type = "video"
+        elif video_bytes:
+            video_b64 = base64.b64encode(video_bytes).decode("utf-8")
+            video_input = {"base64String": video_b64}
+            input_type = "video"
+        elif query:
+            # text-only query for text embeddings
+            input_type = "text"
+            video_input = None
+        else:
+            _bedrock_log.error("No input provided for Marengo")
+            return None
+
+        if input_type == "text":
+            request_body = {
+                "inputType": "text",
+                "text": query,
+                "embeddingOption": embedding_options,
+            }
+        else:
+            request_body = {
+                "inputType": "video",
+                "mediaSource": video_input,
+                "embeddingOption": embedding_options,
+            }
+
+        _bedrock_log.info(f"Invoking Bedrock Marengo ({MARENGO_MODEL_ID}), type={input_type}...")
+        response = bedrock.invoke_model(
+            modelId=MARENGO_MODEL_ID,
+            body=json.dumps(request_body),
+            contentType="application/json",
+            accept="application/json",
+        )
+
+        response_body = json.loads(response["body"].read())
+        _bedrock_log.info(f"Marengo response: {len(str(response_body))} chars")
+        return response_body
+
+    except Exception as e:
+        _bedrock_log.exception(f"Marengo search failed (model={MARENGO_MODEL_ID}, s3_uri={video_s3_uri}, has_bytes={video_bytes is not None}, query_len={len(query) if query else 0})")
+        return None
+
+
+def _extract_text(response_body):
+    """Extract text content from a Bedrock model response.
+    Pegasus returns: {"message": "...", "finishReason": "stop"}
+    """
+    if isinstance(response_body, str):
+        return response_body
+    if isinstance(response_body, dict):
+        # Pegasus format: "message" key
+        for key in ["message", "text", "output", "completion", "content", "result"]:
+            if key in response_body:
+                val = response_body[key]
+                if isinstance(val, str):
+                    return val
+                if isinstance(val, list) and val:
+                    if isinstance(val[0], dict):
+                        return val[0].get("text", json.dumps(val[0]))
+                    return str(val[0])
+        _bedrock_log.warning(f"_extract_text: no known text key in response, keys={list(response_body.keys())}")
+        return json.dumps(response_body, indent=2)
+    return str(response_body)
+
+
+# ══════════════════════════════════════════════════════════════
+# MAIN APP CODE (originally app.py)
+# ══════════════════════════════════════════════════════════════
 
 # ── LOGGING SETUP ─────────────────────────────────────────────
 logging.basicConfig(
@@ -40,20 +1560,6 @@ _ui_handler = SessionLogHandler()
 _ui_handler.setFormatter(logging.Formatter("%(asctime)s", datefmt="%H:%M:%S"))
 logging.getLogger("cleared").addHandler(_ui_handler)
 logging.getLogger("cleared.helpers").addHandler(_ui_handler)
-
-from app_config import RULESETS, JURISDICTIONS, PLATFORMS, AUDIO_FLAGS
-from helpers import (
-    parse_findings, severity_score, parse_timestamp_seconds, build_prompt,
-    finding_text, finding_severity, finding_confidence,
-    parse_rights_from_report,
-    log_feedback, load_feedback_log, load_rights_log, save_rights_log,
-    get_expiring_rights, load_ground_truth, save_ground_truth, compute_metrics,
-)
-from styles import get_app_css
-from bedrock_client import (
-    run_pegasus_analysis, search_with_marengo,
-    is_bedrock_available, upload_to_s3, get_s3_presigned_url,
-)
 
 load_dotenv()
 if is_bedrock_available():
