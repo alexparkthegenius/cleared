@@ -62,6 +62,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Request logging middleware ────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+import traceback
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        t0 = time.time()
+        method = request.method
+        path = request.url.path
+        log.info(f"→ {method} {path}")
+        try:
+            response = await call_next(request)
+            elapsed = round((time.time() - t0) * 1000)
+            log.info(f"← {method} {path} → {response.status_code} ({elapsed}ms)")
+            return response
+        except Exception:
+            elapsed = round((time.time() - t0) * 1000)
+            log.exception(f"✕ {method} {path} → UNHANDLED ERROR ({elapsed}ms)")
+            raise
+
+
+app.add_middleware(RequestLoggingMiddleware)
+
+
+# ── Global exception handler ──────────────────────────────────
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    log.error(f"Unhandled exception on {request.method} {request.url.path}: "
+              f"{type(exc).__name__}: {exc}")
+    log.debug(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {str(exc)}"},
+    )
+
+
+# ── Startup logging ──────────────────────────────────────────
+@app.on_event("startup")
+async def startup_event():
+    log.info("=" * 60)
+    log.info("Cleared API starting up")
+    log.info(f"Bedrock available: {is_bedrock_available()}")
+    log.info(f"AWS region: {os.environ.get('AWS_DEFAULT_REGION', 'not set')}")
+    log.info(f"S3 bucket: {os.environ.get('CLEARED_S3_BUCKET', 'not set')}")
+    log.info(f"AWS account: {os.environ.get('AWS_ACCOUNT_ID', 'not set')}")
+    log.info("=" * 60)
+
+
 # ── In-memory rights store (stateless per-process) ────────────
 _rights_store: list[dict] = []
 
@@ -164,25 +218,46 @@ async def health_check():
 @app.post("/api/upload", response_model=UploadResponse)
 async def upload_video(file: UploadFile = File(...)):
     """Upload a video file to S3 and return the S3 URI."""
+    log.info(f"Upload request received: filename={file.filename}, content_type={file.content_type}")
+
     if not is_bedrock_available():
+        log.error("Upload rejected: AWS credentials not configured")
         raise HTTPException(
             status_code=503,
             detail="AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.",
         )
 
-    file_bytes = await file.read()
+    try:
+        file_bytes = await file.read()
+    except Exception:
+        log.exception("Failed to read uploaded file")
+        raise HTTPException(status_code=400, detail="Failed to read uploaded file.")
+
     if not file_bytes:
+        log.warning("Upload rejected: empty file")
         raise HTTPException(status_code=400, detail="Empty file uploaded.")
 
     filename = file.filename or f"video_{uuid.uuid4().hex[:8]}.mp4"
     video_id = f"{uuid.uuid4().hex[:12]}_{filename}"
 
-    log.info(f"Uploading video: {filename} ({len(file_bytes)} bytes)")
-    s3_uri = upload_to_s3(file_bytes, video_id)
+    log.info(f"Uploading to S3: filename={filename}, size={len(file_bytes)} bytes, video_id={video_id}")
+    try:
+        s3_uri = upload_to_s3(file_bytes, video_id)
+    except Exception:
+        log.exception(f"S3 upload failed: filename={filename}, video_id={video_id}")
+        raise HTTPException(status_code=500, detail="Failed to upload video to S3. Check AWS credentials.")
+
     if not s3_uri:
+        log.error(f"S3 upload returned None: filename={filename}, video_id={video_id}")
         raise HTTPException(status_code=500, detail="Failed to upload video to S3.")
 
-    presigned_url = get_s3_presigned_url(s3_uri)
+    log.info(f"S3 upload successful: s3_uri={s3_uri}")
+
+    try:
+        presigned_url = get_s3_presigned_url(s3_uri)
+    except Exception:
+        log.exception(f"Failed to generate presigned URL for s3_uri={s3_uri}")
+        presigned_url = None
 
     return UploadResponse(
         s3_uri=s3_uri,
@@ -193,12 +268,12 @@ async def upload_video(file: UploadFile = File(...)):
 
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 async def analyze_video(req: AnalyzeRequest):
-    """Run Pegasus compliance analysis on a video.
+    """Run Pegasus compliance analysis on a video."""
+    log.info(f"Analyze request: s3_uri={req.s3_uri[:60]}..., ruleset={req.ruleset}, "
+             f"platforms={req.platforms}, jurisdictions={req.jurisdictions}")
 
-    Accepts an S3 URI (from /api/upload) along with analysis parameters.
-    Returns parsed findings, risk score, and the raw report.
-    """
     if not is_bedrock_available():
+        log.error("Analysis rejected: AWS credentials not configured")
         raise HTTPException(
             status_code=503,
             detail="AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.",
@@ -206,6 +281,7 @@ async def analyze_video(req: AnalyzeRequest):
 
     # Validate ruleset
     if req.ruleset not in RULESETS:
+        log.error(f"Unknown ruleset requested: {req.ruleset}")
         raise HTTPException(
             status_code=400,
             detail=f"Unknown ruleset: {req.ruleset}. Available: {list(RULESETS.keys())}",
@@ -216,71 +292,100 @@ async def analyze_video(req: AnalyzeRequest):
         if p not in PLATFORMS and p != "Custom":
             log.warning(f"Non-standard platform requested: {p}")
 
-    # Build prompt (identical logic to Streamlit app)
-    prompt = build_prompt(
-        ruleset_name=req.ruleset,
-        custom_rules=req.custom_rules,
-        platforms=req.platforms,
-        jurisdictions=req.jurisdictions,
-        audio_flags=req.audio_flags,
-        include_rights=req.include_rights,
-    )
+    # Build prompt
+    try:
+        prompt = build_prompt(
+            ruleset_name=req.ruleset,
+            custom_rules=req.custom_rules,
+            platforms=req.platforms,
+            jurisdictions=req.jurisdictions,
+            audio_flags=req.audio_flags,
+            include_rights=req.include_rights,
+        )
+        log.info(f"Prompt built: {len(prompt)} chars")
+    except Exception:
+        log.exception("Failed to build analysis prompt")
+        raise HTTPException(status_code=500, detail="Failed to build analysis prompt.")
 
-    log.info(f"Starting Pegasus analysis: s3={req.s3_uri}, ruleset={req.ruleset}")
-    log.info(f"Prompt length: {len(prompt)} chars")
     t0 = time.time()
 
     # Run Pegasus
-    report_data = run_pegasus_analysis(
-        video_s3_uri=req.s3_uri,
-        prompt=prompt,
-    )
+    try:
+        log.info(f"Invoking Pegasus: s3_uri={req.s3_uri[:60]}...")
+        report_data = run_pegasus_analysis(
+            video_s3_uri=req.s3_uri,
+            prompt=prompt,
+        )
+    except Exception:
+        elapsed = round(time.time() - t0, 1)
+        log.exception(f"Pegasus invocation failed after {elapsed}s: s3_uri={req.s3_uri[:60]}")
+        raise HTTPException(
+            status_code=500,
+            detail="Pegasus analysis failed. Check AWS credentials, S3 permissions, and video format.",
+        )
+
     if not report_data:
+        elapsed = round(time.time() - t0, 1)
+        log.error(f"Pegasus returned empty response after {elapsed}s: s3_uri={req.s3_uri[:60]}")
         raise HTTPException(
             status_code=500,
             detail="Pegasus analysis returned no results. Check AWS credentials and video input.",
         )
 
     elapsed = round(time.time() - t0, 1)
-    log.info(f"Pegasus complete in {elapsed}s, response: {len(report_data)} chars")
+    log.info(f"Pegasus complete: {elapsed}s, response_length={len(report_data)} chars")
+    log.info(f"Report preview: {report_data[:200]}...")
 
-    # Parse findings (compliance + rights -> unified list)
-    compliance_findings = parse_findings(report_data)
-    rights_entries_auto, rights_findings = parse_rights_from_report(report_data)
-    all_findings = compliance_findings + rights_findings
-    log.info(
-        f"Parsed {len(compliance_findings)} compliance + "
-        f"{len(rights_findings)} rights = {len(all_findings)} total findings"
-    )
+    # Parse findings
+    try:
+        compliance_findings = parse_findings(report_data)
+        rights_entries_auto, rights_findings = parse_rights_from_report(report_data)
+        all_findings = compliance_findings + rights_findings
+        log.info(f"Parsed findings: {len(compliance_findings)} compliance + "
+                 f"{len(rights_findings)} rights = {len(all_findings)} total, "
+                 f"{len(rights_entries_auto)} auto-detected rights entries")
+    except Exception:
+        log.exception(f"Failed to parse Pegasus response: report_length={len(report_data)}")
+        raise HTTPException(status_code=500, detail="Failed to parse analysis results.")
 
-    # Compute risk score with breakdown (identical to Streamlit app)
-    risk_score_val = severity_score(report_data)
-    n_critical = report_data.upper().count("CRITICAL")
-    n_major = report_data.upper().count("MAJOR")
-    n_minor = report_data.upper().count("MINOR")
-    risk_parts = []
-    if n_critical:
-        risk_parts.append(f"{n_critical} critical")
-    if n_major:
-        risk_parts.append(f"{n_major} major")
-    if n_minor:
-        risk_parts.append(f"{n_minor} minor")
-    risk_explanation = ", ".join(risk_parts) if risk_parts else "no flags detected"
+    # Compute risk score
+    try:
+        risk_score_val = severity_score(report_data)
+        n_critical = report_data.upper().count("CRITICAL")
+        n_major = report_data.upper().count("MAJOR")
+        n_minor = report_data.upper().count("MINOR")
+        risk_parts = []
+        if n_critical:
+            risk_parts.append(f"{n_critical} critical")
+        if n_major:
+            risk_parts.append(f"{n_major} major")
+        if n_minor:
+            risk_parts.append(f"{n_minor} minor")
+        risk_explanation = ", ".join(risk_parts) if risk_parts else "no flags detected"
+        log.info(f"Risk score: {risk_score_val}/100 — {risk_explanation}")
+    except Exception:
+        log.exception("Failed to compute risk score")
+        risk_score_val = 0
+        risk_explanation = "scoring error"
 
-    log.info(f"Risk score: {risk_score_val}/100 — {risk_explanation}")
-
-    # Build response findings
+    # Build response
     findings_out = []
-    for f in all_findings:
-        findings_out.append(FindingOut(
-            text=finding_text(f),
-            severity=finding_severity(f),
-            confidence=finding_confidence(f),
-            source=f.get("source", "compliance"),
-            rule=f.get("rule", "Content flag"),
-            timestamp_seconds=parse_timestamp_seconds(f),
-            asset_type=f.get("asset_type"),
-        ))
+    for i, f in enumerate(all_findings):
+        try:
+            findings_out.append(FindingOut(
+                text=finding_text(f),
+                severity=finding_severity(f),
+                confidence=finding_confidence(f),
+                source=f.get("source", "compliance"),
+                rule=f.get("rule", "Content flag"),
+                timestamp_seconds=parse_timestamp_seconds(f),
+                asset_type=f.get("asset_type"),
+            ))
+        except Exception:
+            log.exception(f"Failed to serialize finding {i}: {f}")
+
+    log.info(f"Analysis complete: {len(findings_out)} findings, risk={risk_score_val}/100, "
+             f"duration={elapsed}s, video={req.s3_uri[:40]}")
 
     return AnalyzeResponse(
         findings=findings_out,
