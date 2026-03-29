@@ -319,12 +319,22 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 /* ── LAYOUT ── */
 [data-testid="stCustomComponentV1"] {
     margin-bottom: -2rem !important; padding-bottom: 0 !important; line-height: 0 !important;
-    position: sticky !important; top: 0 !important; z-index: 999 !important;
-    background: var(--bg-primary) !important;
 }
 iframe { display: block !important; margin-bottom: 0 !important; }
 .stTabs { margin-top: 0 !important; }
 [data-testid="stCustomComponentV1"] > div { padding-bottom: 0 !important; }
+
+/* ── SCROLLABLE TABS CONTAINER ── */
+section.main > div.block-container { padding-top: 0 !important; max-width: 100% !important; }
+.scrollable-findings {
+    max-height: calc(100vh - 560px);
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+.scrollable-findings::-webkit-scrollbar { width: 4px; }
+.scrollable-findings::-webkit-scrollbar-track { background: var(--bg-primary); }
+.scrollable-findings::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.scrollable-findings::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ── FINDING ACTION BUTTONS ── */
 .finding-actions {

@@ -721,7 +721,9 @@ with tab_findings:
             if "remediations" not in st.session_state:
                 st.session_state.remediations = {}
 
-            for i, finding in enumerate(findings):
+            # scrollable container so video stays visible above
+            with st.container(height=500):
+              for i, finding in enumerate(findings):
                 ft = finding_text(finding)
                 sev = finding_severity(finding)
                 conf = finding_confidence(finding)
