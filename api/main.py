@@ -486,40 +486,58 @@ async def analyze_video(req: AnalyzeRequest):
     except Exception:
         log.exception("Finding deduplication failed, using raw findings")
 
-    # ── Fix clustered timestamps for rights findings ─────────
-    # Content flags (Section 1) get real timecodes from Pegasus.
-    # Rights findings (Section 3) often cluster at 0:00 — distribute those
-    # across the video duration so they don't all stack at the start.
+    # ── Fix clustered timestamps via second Pegasus call ──────
+    # Content flags get real timecodes. Rights findings often cluster at 0:00.
+    # Run a targeted second Pegasus call asking ONLY for timestamps of assets.
     try:
-        # Separate content vs rights findings
-        content_with_ts = [f for f in all_findings if f.get("source") == "compliance"]
         rights_with_ts = [f for f in all_findings if f.get("source") == "rights"]
-
-        # Get max content timestamp as video duration estimate
-        content_timestamps = [parse_timestamp_seconds(f) for f in content_with_ts]
-        max_content_ts = max(content_timestamps) if content_timestamps and max(content_timestamps) > 0 else 120
-        video_duration = max(max_content_ts, 60)
-
-        # Check if rights findings are clustered at 0
         rights_timestamps = [parse_timestamp_seconds(f) for f in rights_with_ts]
         rights_zero_count = sum(1 for t in rights_timestamps if t <= 1)
 
-        if len(rights_with_ts) > 1 and rights_zero_count >= len(rights_with_ts) * 0.6:
-            interval = video_duration / (len(rights_with_ts) + 1)
-            log.warning(f"Rights timestamps clustered at 0 ({rights_zero_count}/{len(rights_with_ts)}). "
-                       f"Distributing across {video_duration}s at {interval:.1f}s intervals")
+        if len(rights_with_ts) > 1 and rights_zero_count >= len(rights_with_ts) * 0.5:
+            # Build a targeted timestamp query
+            asset_list = []
             for idx, f in enumerate(rights_with_ts):
-                current_ts = parse_timestamp_seconds(f)
-                if current_ts <= 1:
-                    new_ts = int(interval * (idx + 1))
-                    old_text = f.get("text", "")
-                    if not re.match(r'^\[[\d:]+\]', old_text):
-                        mm = new_ts // 60
-                        ss = new_ts % 60
-                        f["text"] = f"[{mm:02d}:{ss:02d}] {old_text}"
-                    log.info(f"  Rights finding {idx}: 0s -> {new_ts}s")
+                desc = f.get("text", "")[:60]
+                asset_list.append(f"{idx+1}. {desc}")
+            assets_text = "\n".join(asset_list)
+
+            ts_prompt = f"""For each of the following items found in this video, tell me the EXACT video timecode (MM:SS) where it FIRST becomes visible or audible. Watch the entire video carefully.
+
+{assets_text}
+
+Reply with ONLY a numbered list in this exact format, one per line:
+1. [MM:SS]
+2. [MM:SS]
+3. [MM:SS]
+...
+
+Do NOT use [00:00] unless the item truly appears in the very first second. Watch the full video."""
+
+            log.info(f"Running targeted timestamp Pegasus call for {len(rights_with_ts)} rights findings")
+            try:
+                ts_response = run_pegasus_analysis(
+                    video_s3_uri=analysis_s3_uri,
+                    prompt=ts_prompt,
+                )
+                if ts_response:
+                    log.info(f"Timestamp response: {ts_response[:300]}")
+                    # Parse numbered list: "1. [00:25]" or "1. 00:25"
+                    ts_matches = re.findall(r'(\d+)\.\s*\[?(\d{1,2}):(\d{2})\]?', ts_response)
+                    for num_str, mm, ss in ts_matches:
+                        idx = int(num_str) - 1
+                        if 0 <= idx < len(rights_with_ts):
+                            new_ts = int(mm) * 60 + int(ss)
+                            if new_ts > 0:  # Only override if non-zero
+                                old_text = rights_with_ts[idx].get("text", "")
+                                # Remove old timestamp if present
+                                old_text = re.sub(r'^\[[\d:]+\]\s*', '', old_text)
+                                rights_with_ts[idx]["text"] = f"[{int(mm):02d}:{int(ss):02d}] {old_text}"
+                                log.info(f"  Rights finding {idx}: updated to {mm}:{ss}")
+            except Exception:
+                log.exception("Targeted timestamp Pegasus call failed (non-fatal, keeping original timestamps)")
     except Exception:
-        log.exception("Rights timestamp redistribution failed (non-fatal)")
+        log.exception("Rights timestamp fix failed (non-fatal)")
 
     # Compute risk score
     try:
