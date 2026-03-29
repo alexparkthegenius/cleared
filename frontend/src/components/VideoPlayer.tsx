@@ -92,9 +92,9 @@ export default function VideoPlayer({
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="bg-surface rounded-xl border border-border overflow-hidden">
+    <div className="bg-surface rounded-xl border border-border overflow-hidden h-full flex flex-col">
       {/* Video */}
-      <div className="relative bg-black aspect-video">
+      <div className="relative bg-black flex-1 min-h-0">
         {videoUrl ? (
           <video
             ref={videoRef}

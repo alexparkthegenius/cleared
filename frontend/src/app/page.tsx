@@ -244,8 +244,8 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Video + Violations Row — fixed height */}
-        <div className="flex border-b border-border" style={{ height: '55vh', minHeight: '300px' }}>
+        {/* Top: Video + Violations */}
+        <div className="flex border-b border-border" style={{ height: '50vh', minHeight: '250px' }}>
           {/* Video Player */}
           <div className="flex-1 min-w-0 p-3 pb-1">
             <VideoPlayer
@@ -269,15 +269,17 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Tab Bar — sticky */}
-        <TabBar
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          findingsCount={findings.length}
-        />
+        {/* Bottom: Tabs + Content */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Tab Bar */}
+          <TabBar
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            findingsCount={findings.length}
+          />
 
-        {/* Tab Content — scrollable */}
-        <div className="flex-1 overflow-y-auto p-4 pb-20">
+          {/* Tab Content — scrollable */}
+          <div className="flex-1 overflow-y-auto p-4 pb-20">
           {activeTab === "compliance" && (
             <ComplianceFindings
               findings={findings}
@@ -304,6 +306,7 @@ export default function Home() {
               onSave={setGroundTruth}
             />
           )}
+          </div>
         </div>
       </main>
     </div>
