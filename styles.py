@@ -6,6 +6,36 @@ def get_app_css():
     return """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+
+/* ── MATERIAL ICONS FALLBACK ──
+   Force all material icon spans to use the icon font.
+   If font still fails, hide the raw text completely. */
+.stApp span[data-icon],
+.stApp .material-symbols-rounded,
+.stApp [class*="Icon"] span,
+.stApp [data-testid*="Icon"] span,
+.stApp [data-testid="stExpanderToggleIcon"] span,
+.stApp [data-testid="stSidebarCollapseButton"] span,
+.stApp [data-testid="collapsedControl"] span,
+.stApp summary span[class*="icon"],
+.stApp details summary > span:first-child {
+    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
+    font-size: 1.2rem !important;
+    -webkit-font-feature-settings: 'liga' !important;
+    font-feature-settings: 'liga' !important;
+    -webkit-font-smoothing: antialiased !important;
+    direction: ltr !important;
+    word-wrap: normal !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    display: inline-block !important;
+    width: 1.2rem !important;
+    height: 1.2rem !important;
+    line-height: 1.2rem !important;
+    vertical-align: middle !important;
+    color: var(--text-muted) !important;
+}
 
 /* ══════════════════════════════════════════════════════
    THEME VARIABLES
@@ -118,9 +148,13 @@ section[data-testid="stSidebar"], section[data-testid="stSidebar"] * {
 .stApp h1 {
     font-weight: 700 !important;
     color: var(--text-primary) !important;
-    font-size: 1.6rem !important;
+    font-size: 2.4rem !important;
     letter-spacing: -0.02em !important;
     margin-bottom: 0 !important;
+}
+/* sidebar logo specifically */
+.stApp section[data-testid="stSidebar"] h1 {
+    font-size: 2.4rem !important;
 }
 .stApp h2 {
     color: var(--text-primary) !important;
@@ -187,12 +221,30 @@ section[data-testid="stSidebar"] [data-testid="collapsedControl"] svg {
     fill: var(--text-muted) !important;
     color: var(--text-muted) !important;
 }
-/* remove default top padding/margin that creates the dead space */
+/* NUKE all sidebar top spacing — every possible source */
 section[data-testid="stSidebar"] .block-container,
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
-section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
-    padding-top: 0.25rem !important;
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"],
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] > div > div,
+section[data-testid="stSidebar"] > div > div > div,
+section[data-testid="stSidebar"] > div:first-child > div:first-child {
+    padding-top: 0 !important;
     margin-top: 0 !important;
+}
+/* hide the sidebar nav header if empty */
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {
+    display: none !important;
+}
+/* hide the sidebar header/decoration area */
+section[data-testid="stSidebar"] [data-testid="stSidebarHeader"],
+section[data-testid="stSidebar"] header {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
 }
 section[data-testid="stSidebar"] .stMarkdown p {
     color: var(--text-tertiary) !important;
@@ -318,11 +370,39 @@ section[data-testid="stSidebar"] .stCaption p {
 .stApp [data-testid="stExpander"] summary span {
     color: var(--text-secondary) !important;
 }
-/* fix expander icon text bleeding through */
+/* nuclear fix: hide ALL raw icon text in expanders */
 .stApp .stExpander [data-testid="stExpanderToggleIcon"],
-.stApp [data-testid="stExpander"] [data-testid="stExpanderToggleIcon"] {
+.stApp [data-testid="stExpander"] [data-testid="stExpanderToggleIcon"],
+.stApp details summary > span:first-child,
+.stApp .stExpander summary > div > span:first-child {
     font-size: 0 !important;
     overflow: hidden !important;
+    width: 16px !important;
+    height: 16px !important;
+    display: inline-block !important;
+    position: relative !important;
+}
+/* CSS triangle fallback when icon font fails */
+.stApp .stExpander [data-testid="stExpanderToggleIcon"]::before,
+.stApp details summary > span:first-child::before {
+    content: "" !important;
+    display: block !important;
+    width: 0 !important;
+    height: 0 !important;
+    border-left: 5px solid var(--text-muted) !important;
+    border-top: 4px solid transparent !important;
+    border-bottom: 4px solid transparent !important;
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+}
+.stApp details[open] summary > span:first-child::before,
+.stApp .stExpander[open] [data-testid="stExpanderToggleIcon"]::before {
+    border-left: 4px solid transparent !important;
+    border-right: 4px solid transparent !important;
+    border-top: 5px solid var(--text-muted) !important;
+    border-bottom: none !important;
 }
 .stApp .stExpander [data-testid="stExpanderToggleIcon"] svg {
     font-size: 1rem !important;
